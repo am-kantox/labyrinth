@@ -66,13 +66,22 @@ Labyrinth map reachability and connectivity rules are defined in Prolog (`priv/p
 
 ---
 
-## 📌 Interactive "Post-It" Hints Panel & Map Overlay
+## 📌 Bot Expedition Post-Its & Interactive Map Overlay
 
-Players can draft hypothetical maze layouts and notes next to their game board:
+Players can track AI computer bots using blind relative sub-grid fragments and pin them to the master map:
 
-* **Disorientation Popups:** Falling into a Pit 🕳 or Teleporter 🌀 automatically creates and pops upfront a new disorientation note!
-* **📌 Stick to Map Overlay:** Click **"Stick to Map"** on any Post-It note to overlay its drafted symbol stamps (🚪, 💎, 🧱, 🕳, 🌀, 👹, ❓) directly onto the main Game Board grid in real time!
-* **Multiple Colors:** Create Yellow, Pink, Green, or Blue sticky notes. Notes are persisted per player in PostgreSQL.
+* **🤖 Blind Relative Sub-Grid Fragments:**
+  * Each AI bot records its relative movements, bumped walls, and discovered landmarks (`🕳`, `🌀`, `🏥`, `⚔️`, `💎`, `🏁`) on a personal relative coordinate grid originating from `(0,0)`.
+  * Each bot is assigned a distinct theme color (**Amber 🟡, Sky Blue 🔵, Emerald Green 🟢, Purple 🟣, Rose Pink 🔴**) that styles its map icons, roster badges, and Post-It cards.
+
+* **📌 Snapshot Pinning & Fresh Fragment Reset:**
+  * Click **"📌 Pin Active Fragment"** on any bot's Post-It card and select a cell `{X, Y}` on the main map to anchor its explored fragment.
+  * Pinning saves a **fixed map snapshot overlay** on the game board and immediately resets the bot's active tracking to a **fresh relative fragment starting at `(0,0)`**, allowing players to continuously trace bot movements across multiple maze segments.
+  * Pinned snapshots project feature badges (`📌1 🕳`, `📌2 🌀`, `💎💀`, etc.) directly onto the main map grid.
+
+* **🦨 Minotaur Stink Perception & Configurable Wall Density:**
+  * **Minotaur Stink Detection (2-Cell Radius):** When an explorer comes within 2 cells of the Minotaur 👹, an animated warning banner (`🦨 SENSORY WARNING: You smelled the Minotaur's foul stink wafting nearby!`) is displayed.
+  * **Configurable Wall Density (0%..100%):** Set maze wall density during room creation from `0%` (open cavern) to `100%` (maximum wall density).
 
 ---
 
