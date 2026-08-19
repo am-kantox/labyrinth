@@ -11,7 +11,6 @@ defmodule LabyrinthWeb.LobbyLive do
       Phoenix.PubSub.subscribe(Labyrinth.PubSub, "lobby")
     end
 
-    games = Games.list_games()
     form = default_form()
 
     {:ok,
@@ -19,7 +18,33 @@ defmodule LabyrinthWeb.LobbyLive do
      |> assign(:page_title, "Labyrinth Lobby")
      |> assign(:form, form)
      |> assign(:prolog_status, nil)
-     |> stream(:games, games)}
+     |> fetch_and_stream_games(:active, 1)}
+  end
+
+  @impl true
+  def handle_event("select_tab", %{"tab" => tab_str}, socket) do
+    tab = String.to_existing_atom(tab_str)
+    {:noreply, fetch_and_stream_games(socket, tab, 1)}
+  end
+
+  @impl true
+  def handle_event("next_page", _params, socket) do
+    if socket.assigns.has_more do
+      {:noreply,
+       fetch_and_stream_games(socket, socket.assigns.active_tab, socket.assigns.page + 1)}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  @impl true
+  def handle_event("prev_page", _params, socket) do
+    if socket.assigns.page > 1 do
+      {:noreply,
+       fetch_and_stream_games(socket, socket.assigns.active_tab, socket.assigns.page - 1)}
+    else
+      {:noreply, socket}
+    end
   end
 
   @impl true
@@ -86,8 +111,17 @@ defmodule LabyrinthWeb.LobbyLive do
 
   @impl true
   def handle_info(:game_created, socket) do
-    games = Games.list_games()
-    {:noreply, stream(socket, :games, games, reset: true)}
+    {:noreply, fetch_and_stream_games(socket, socket.assigns.active_tab, socket.assigns.page)}
+  end
+
+  defp fetch_and_stream_games(socket, tab, page) do
+    {games, has_more} = Games.list_games_by_tab(tab, page, 30)
+
+    socket
+    |> assign(:active_tab, tab)
+    |> assign(:page, page)
+    |> assign(:has_more, has_more)
+    |> stream(:games, games, reset: true)
   end
 
   defp default_form do
@@ -276,12 +310,53 @@ defmodule LabyrinthWeb.LobbyLive do
 
           <%!-- Active Games List --%>
           <div class="lg:col-span-2 bg-slate-900 border border-slate-800 rounded-xl p-6 shadow-xl space-y-4">
-            <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+            <div class="flex flex-wrap items-center justify-between border-b border-slate-800 pb-3 gap-3">
               <h2 class="text-xl font-bold text-slate-100 flex items-center gap-2">
-                <.icon name="hero-rectangle-stack" class="w-5 h-5 text-indigo-400" />
-                Active Labyrinth Games
+                <.icon name="hero-rectangle-stack" class="w-5 h-5 text-indigo-400" /> Labyrinth Games
               </h2>
-              <span class="text-xs text-slate-400 font-mono">Real-time PubSub</span>
+
+              <%!-- Tabs Header --%>
+              <div class="flex items-center bg-slate-950 p-1 rounded-lg border border-slate-800 text-xs font-semibold">
+                <button
+                  phx-click="select_tab"
+                  phx-value-tab="active"
+                  class={[
+                    "px-3 py-1.5 rounded-md transition-all flex items-center gap-1",
+                    if(@active_tab == :active,
+                      do: "bg-emerald-500 text-slate-950 font-bold shadow",
+                      else: "text-slate-400 hover:text-slate-200"
+                    )
+                  ]}
+                >
+                  🟢 Active (&lt;10m)
+                </button>
+                <button
+                  phx-click="select_tab"
+                  phx-value-tab="stale"
+                  class={[
+                    "px-3 py-1.5 rounded-md transition-all flex items-center gap-1",
+                    if(@active_tab == :stale,
+                      do: "bg-amber-500 text-slate-950 font-bold shadow",
+                      else: "text-slate-400 hover:text-slate-200"
+                    )
+                  ]}
+                >
+                  ⏳ Stale (&ge;10m)
+                </button>
+                <button
+                  phx-click="select_tab"
+                  phx-value-tab="finished"
+                  class={[
+                    "px-3 py-1.5 rounded-md transition-all flex items-center gap-1",
+                    if(@active_tab == :finished,
+                      do: "bg-purple-500 text-white font-bold shadow",
+                      else: "text-slate-400 hover:text-slate-200"
+                    )
+                  ]}
+                >
+                  🏁 Finished
+                </button>
+              </div>
             </div>
 
             <div id="games-list" phx-update="stream" class="space-y-3">
@@ -289,7 +364,7 @@ defmodule LabyrinthWeb.LobbyLive do
                 id="no-active-games"
                 class="hidden only:block p-8 text-center bg-slate-950/50 rounded-xl border border-slate-800 text-slate-400 text-sm"
               >
-                No active games found. Generate a new labyrinth to get started!
+                No {to_string(@active_tab)} games found in this category. Generate a new labyrinth to get started!
               </div>
 
               <div
@@ -330,13 +405,15 @@ defmodule LabyrinthWeb.LobbyLive do
                 </div>
 
                 <div class="flex items-center gap-2">
-                  <.link
-                    navigate={~p"/games/#{game.id}"}
-                    class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs rounded-lg shadow transition-colors flex items-center gap-1.5"
-                  >
-                    <.icon name="hero-play" class="w-3.5 h-3.5" />
-                    <span>Join Game</span>
-                  </.link>
+                  <%= if game.status != "finished" or @active_tab in [:active, :stale] do %>
+                    <.link
+                      navigate={~p"/games/#{game.id}"}
+                      class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs rounded-lg shadow transition-colors flex items-center gap-1.5"
+                    >
+                      <.icon name="hero-play" class="w-3.5 h-3.5" />
+                      <span>Join Game</span>
+                    </.link>
+                  <% end %>
                   <.link
                     navigate={~p"/history/#{game.id}"}
                     class="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium rounded-lg border border-slate-700 transition-colors flex items-center gap-1.5"
@@ -345,6 +422,27 @@ defmodule LabyrinthWeb.LobbyLive do
                     <span>History</span>
                   </.link>
                 </div>
+              </div>
+            </div>
+
+            <%!-- Pagination Bar --%>
+            <div class="flex items-center justify-between pt-3 border-t border-slate-800 text-xs font-mono text-slate-400">
+              <span>Page {@page} ({to_string(@active_tab)})</span>
+              <div class="flex items-center gap-2">
+                <button
+                  phx-click="prev_page"
+                  disabled={@page <= 1}
+                  class="px-3 py-1 bg-slate-800 hover:bg-slate-700 disabled:opacity-30 disabled:hover:bg-slate-800 text-white font-semibold rounded border border-slate-700 transition-colors"
+                >
+                  ◄ Prev 30
+                </button>
+                <button
+                  phx-click="next_page"
+                  disabled={not @has_more}
+                  class="px-3 py-1 bg-slate-800 hover:bg-slate-700 disabled:opacity-30 disabled:hover:bg-slate-800 text-white font-semibold rounded border border-slate-700 transition-colors"
+                >
+                  Next 30 ►
+                </button>
               </div>
             </div>
           </div>

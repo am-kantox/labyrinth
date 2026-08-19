@@ -570,7 +570,14 @@ defmodule LabyrinthWeb.GameLive do
 
             <button
               phx-click="add_bot"
-              class="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-lg border border-slate-700 transition-colors flex items-center gap-1.5"
+              disabled={@engine.status == :finished}
+              class={[
+                "px-3 py-2 text-xs font-semibold rounded-lg border transition-colors flex items-center gap-1.5",
+                if(@engine.status == :finished,
+                  do: "bg-slate-900 text-slate-600 border-slate-800 opacity-40 cursor-not-allowed",
+                  else: "bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700"
+                )
+              ]}
             >
               <.icon name="hero-cpu-chip" class="w-4 h-4 text-amber-400" /> Add AI Bot
             </button>
