@@ -86,11 +86,35 @@ defmodule Labyrinth.Game.Engine do
         # :active, :stunned, :eliminated, :escaped
         status: :active,
         visited_cells: MapSet.new([game.entrance]),
-        known_walls: MapSet.new()
+        known_walls: MapSet.new(),
+        rel_x: 0,
+        rel_y: 0,
+        visited_rel_cells: MapSet.new([{0, 0}]),
+        known_rel_walls: MapSet.new(),
+        discovered_rel_features: %{}
       }
 
       updated_players = game.players ++ [player]
       %{game | players: updated_players}
+    end
+  end
+
+  def reset_bot_rel_tracking(game, bot_id) do
+    bot = Enum.find(game.players, fn p -> p.id == bot_id end)
+
+    if bot do
+      reset_bot = %{
+        bot
+        | rel_x: 0,
+          rel_y: 0,
+          visited_rel_cells: MapSet.new([{0, 0}]),
+          known_rel_walls: MapSet.new(),
+          discovered_rel_features: %{}
+      }
+
+      update_player_in_game(game, reset_bot)
+    else
+      game
     end
   end
 
@@ -205,12 +229,29 @@ defmodule Labyrinth.Game.Engine do
       is_out_of_bounds(target_pos, game.width, game.height) or
         has_wall?(game.walls, pos_before, target_pos)
 
+    rx = Map.get(player, :rel_x, 0)
+    ry = Map.get(player, :rel_y, 0)
+    {dx, dy} = dir_delta(dir)
+    target_rx = rx + dx
+    target_ry = ry + dy
+
     if wall_blocked? do
       # Bump wall
       updated_known_walls =
         MapSet.put(player.known_walls, normalize_wall_pair(pos_before, target_pos))
 
-      updated_player = %{player | known_walls: updated_known_walls}
+      updated_rel_walls =
+        MapSet.put(
+          Map.get(player, :known_rel_walls, MapSet.new()),
+          normalize_wall_pair({rx, ry}, {target_rx, target_ry})
+        )
+
+      updated_player = %{
+        player
+        | known_walls: updated_known_walls,
+          known_rel_walls: updated_rel_walls
+      }
+
       game_updated = update_player_in_game(game, updated_player)
 
       summary = %{
@@ -229,7 +270,7 @@ defmodule Labyrinth.Game.Engine do
     else
       # Clear move
       {final_pos, move_result, special_msg, updated_player} =
-        resolve_cell_landing(game, player, target_pos)
+        resolve_cell_landing(game, player, target_pos, {target_rx, target_ry})
 
       game_updated = update_player_in_game(game, updated_player)
 
@@ -418,20 +459,33 @@ defmodule Labyrinth.Game.Engine do
     {game, summary}
   end
 
-  defp resolve_cell_landing(game, player, target_pos) do
+  defp resolve_cell_landing(game, player, target_pos, target_rel_pos) do
     visited = MapSet.put(player.visited_cells, target_pos)
+
+    {rx, ry} = target_rel_pos
+    rel_visited = MapSet.put(Map.get(player, :visited_rel_cells, MapSet.new()), {rx, ry})
+    rel_feats = Map.get(player, :discovered_rel_features, %{})
 
     base_player = %{
       player
       | x: elem(target_pos, 0),
         y: elem(target_pos, 1),
-        visited_cells: visited
+        visited_cells: visited,
+        rel_x: rx,
+        rel_y: ry,
+        visited_rel_cells: rel_visited
     }
 
     cond do
       # 1. Pit / Trap
       has_pit?(game.pits, target_pos) ->
-        updated_player = %{base_player | status: :stunned}
+        updated_rel_feats = Map.put(rel_feats, {rx, ry}, "pit")
+
+        updated_player = %{
+          base_player
+          | status: :stunned,
+            discovered_rel_features: updated_rel_feats
+        }
 
         {target_pos, "pit", "#{player.name} fell into a Pit trap! (Loses next turn)",
          updated_player}
@@ -440,12 +494,14 @@ defmodule Labyrinth.Game.Engine do
       has_teleport?(game.teleporters, target_pos) ->
         destination = get_teleport_dest(game.teleporters, target_pos)
         teleport_visited = MapSet.put(visited, destination)
+        updated_rel_feats = Map.put(rel_feats, {rx, ry}, "teleport")
 
         updated_player = %{
           base_player
           | x: elem(destination, 0),
             y: elem(destination, 1),
-            visited_cells: teleport_visited
+            visited_cells: teleport_visited,
+            discovered_rel_features: updated_rel_feats
         }
 
         {destination, "teleport", "#{player.name} stepped on a Teleporter and was warped!",
@@ -453,48 +509,77 @@ defmodule Labyrinth.Game.Engine do
 
       # 3. Hospital Cell
       target_pos == game.hospital ->
+        updated_rel_feats = Map.put(rel_feats, {rx, ry}, "hospital")
+
         {updated_player, msg} =
           if base_player.status == :wounded or base_player.health < 3 do
-            p_healed = %{base_player | health: 3, status: :active}
+            p_healed = %{
+              base_player
+              | health: 3,
+                status: :active,
+                discovered_rel_features: updated_rel_feats
+            }
 
             {p_healed,
              "🏥 #{player.name} visited the Hospital! Fully healed back to 3 HP (Healthy)!"}
           else
-            {base_player, "🏥 #{player.name} visited the Hospital (already at full 3 HP)."}
+            p_with_feat = %{base_player | discovered_rel_features: updated_rel_feats}
+            {p_with_feat, "🏥 #{player.name} visited the Hospital (already at full 3 HP)."}
           end
 
         {target_pos, "hospital", msg, updated_player}
 
       # 4. Arsenal Cell: Restock Ammunition to 3 bullets & 3 grenades
       target_pos == game.arsenal ->
+        updated_rel_feats = Map.put(rel_feats, {rx, ry}, "arsenal")
+
         {updated_player, msg} =
           if base_player.bullets < 3 or Map.get(base_player, :grenades, 3) < 3 do
-            p_reloaded = %{base_player | bullets: 3, grenades: 3}
+            p_reloaded = %{
+              base_player
+              | bullets: 3,
+                grenades: 3,
+                discovered_rel_features: updated_rel_feats
+            }
 
             {p_reloaded,
              "⚔️ #{player.name} visited the Arsenal! Bullets (3/3) & Grenades (3/3) fully reloaded 💣🔫!"}
           else
-            {base_player,
+            p_with_feat = %{base_player | discovered_rel_features: updated_rel_feats}
+
+            {p_with_feat,
              "⚔️ #{player.name} visited the Arsenal (already fully loaded with 3 bullets & 3 grenades)."}
           end
 
         {target_pos, "arsenal", msg, updated_player}
 
-      # 4. Treasure cell
+      # 5. Treasure cell
       target_pos == game.treasure and not player.has_treasure ->
-        updated_player = %{base_player | has_treasure: true}
+        updated_rel_feats = Map.put(rel_feats, {rx, ry}, "treasure")
+
+        updated_player = %{
+          base_player
+          | has_treasure: true,
+            discovered_rel_features: updated_rel_feats
+        }
 
         {target_pos, "treasure", "💎 #{player.name} FOUND THE TREASURE! Now escape to the Exit!",
          updated_player}
 
-      # 5. Exit cell with treasure
+      # 6. Exit cell with treasure
       target_pos == game.exit and base_player.has_treasure ->
-        updated_player = %{base_player | status: :escaped}
+        updated_rel_feats = Map.put(rel_feats, {rx, ry}, "exit")
+
+        updated_player = %{
+          base_player
+          | status: :escaped,
+            discovered_rel_features: updated_rel_feats
+        }
 
         {target_pos, "escaped", "🏆 #{player.name} ESCAPED THE LABYRINTH WITH THE TREASURE!",
          updated_player}
 
-      # 6. Regular clear cell
+      # 7. Regular clear cell
       true ->
         {target_pos, "moved", "#{player.name} moved 1 cell.", base_player}
     end
@@ -524,9 +609,25 @@ defmodule Labyrinth.Game.Engine do
       "#{icon} #{turn_summary.player_name}: #{String.upcase(turn_summary.action_type)} #{dir_str} → #{res_str}"
 
     sound_logs = Enum.map(turn_summary.sound_effects || [], fn echo -> "🔊 #{echo}" end)
+    active_player = Enum.find(game.players, fn p -> p.id == turn_summary.player_id end)
+
+    stink_log =
+      if active_player && game.minotaur && active_player.status in [:active, :wounded] do
+        {mx, my} = parse_point(game.minotaur)
+
+        if abs(active_player.x - mx) + abs(active_player.y - my) <= 2 do
+          "🦨 #{active_player.name} smelled the Minotaur's foul stink wafting from nearby! (Within 2 cells)"
+        else
+          nil
+        end
+      else
+        nil
+      end
+
+    stink_logs = if stink_log, do: [stink_log], else: []
     divider = "─── Round #{game.round_number} • #{icon} #{turn_summary.player_name} ───"
 
-    new_log_batch = [divider, formatted_msg | sound_logs] ++ [turn_summary.message]
+    new_log_batch = [divider, formatted_msg] ++ stink_logs ++ sound_logs ++ [turn_summary.message]
     updated_logs = new_log_batch ++ game.log_entries
 
     game = %{game | last_action_result: turn_summary, log_entries: updated_logs}

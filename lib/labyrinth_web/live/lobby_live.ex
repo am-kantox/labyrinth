@@ -28,13 +28,15 @@ defmodule LabyrinthWeb.LobbyLive do
     height = String.to_integer(params["height"] || "10")
     pit_count = String.to_integer(params["pit_count"] || "3")
     teleport_count = String.to_integer(params["teleport_count"] || "1")
+    wall_density = String.to_integer(params["wall_density"] || "70")
 
     {:ok, map_data} =
       Labyrinth.Game.Generator.generate_map(
         width: width,
         height: height,
         pit_count: pit_count,
-        teleport_count: teleport_count
+        teleport_count: teleport_count,
+        wall_density: wall_density
       )
 
     case Validator.validate_map(map_data) do
@@ -57,6 +59,7 @@ defmodule LabyrinthWeb.LobbyLive do
     bot_count = String.to_integer(params["bot_count"] || "1")
     pit_count = String.to_integer(params["pit_count"] || "3")
     teleport_count = String.to_integer(params["teleport_count"] || "1")
+    wall_density = String.to_integer(params["wall_density"] || "70")
     minotaur_enabled = Map.get(params, "minotaur_enabled", "true") in ["true", true]
 
     game_id = Ecto.UUID.generate()
@@ -69,6 +72,7 @@ defmodule LabyrinthWeb.LobbyLive do
            bot_count: bot_count,
            pit_count: pit_count,
            teleport_count: teleport_count,
+           wall_density: wall_density,
            minotaur_enabled: minotaur_enabled
          ) do
       {:ok, _pid} ->
@@ -95,6 +99,7 @@ defmodule LabyrinthWeb.LobbyLive do
         "bot_count" => "2",
         "pit_count" => "3",
         "teleport_count" => "5",
+        "wall_density" => "70",
         "minotaur_enabled" => "true"
       },
       as: :game
@@ -156,8 +161,8 @@ defmodule LabyrinthWeb.LobbyLive do
                   <.input
                     field={@form[:width]}
                     type="number"
-                    min="7"
-                    max="15"
+                    min="5"
+                    max="20"
                     class="w-full bg-slate-950 border-slate-700 text-white rounded-lg px-3 py-2 text-sm"
                   />
                 </div>
@@ -166,14 +171,14 @@ defmodule LabyrinthWeb.LobbyLive do
                   <.input
                     field={@form[:height]}
                     type="number"
-                    min="7"
-                    max="15"
+                    min="5"
+                    max="20"
                     class="w-full bg-slate-950 border-slate-700 text-white rounded-lg px-3 py-2 text-sm"
                   />
                 </div>
               </div>
 
-              <div class="grid grid-cols-3 gap-2">
+              <div class="grid grid-cols-4 gap-2">
                 <div>
                   <label class="block text-xs font-medium text-slate-300 mb-1">Bots</label>
                   <.input
@@ -181,27 +186,40 @@ defmodule LabyrinthWeb.LobbyLive do
                     type="number"
                     min="0"
                     max="4"
-                    class="w-full bg-slate-950 border-slate-700 text-white rounded-lg px-3 py-2 text-sm"
+                    class="w-full bg-slate-950 border-slate-700 text-white rounded-lg px-2 py-2 text-sm"
                   />
                 </div>
                 <div>
-                  <label class="block text-xs font-medium text-slate-300 mb-1">Traps/Pits</label>
+                  <label class="block text-xs font-medium text-slate-300 mb-1">Pits</label>
                   <.input
                     field={@form[:pit_count]}
                     type="number"
                     min="1"
                     max="6"
-                    class="w-full bg-slate-950 border-slate-700 text-white rounded-lg px-3 py-2 text-sm"
+                    class="w-full bg-slate-950 border-slate-700 text-white rounded-lg px-2 py-2 text-sm"
                   />
                 </div>
                 <div>
-                  <label class="block text-xs font-medium text-slate-300 mb-1">Portals (0..10)</label>
+                  <label class="block text-xs font-medium text-slate-300 mb-1">Portals</label>
                   <.input
                     field={@form[:teleport_count]}
                     type="number"
                     min="0"
                     max="10"
-                    class="w-full bg-slate-950 border-slate-700 text-white rounded-lg px-3 py-2 text-sm"
+                    class="w-full bg-slate-950 border-slate-700 text-white rounded-lg px-2 py-2 text-sm"
+                  />
+                </div>
+                <div>
+                  <label
+                    class="block text-xs font-medium text-slate-300 mb-1"
+                    title="Wall Density % (0=None, 100=Max)"
+                  >Walls %</label>
+                  <.input
+                    field={@form[:wall_density]}
+                    type="number"
+                    min="0"
+                    max="100"
+                    class="w-full bg-slate-950 border-slate-700 text-white rounded-lg px-2 py-2 text-sm"
                   />
                 </div>
               </div>

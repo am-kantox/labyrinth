@@ -53,7 +53,9 @@ defmodule LabyrinthWeb.GameLive do
      # Toggle GM full map view
      |> assign(:gm_mode, false)
      |> assign(:presences, presences)
-     |> assign(:post_its, post_its)}
+     |> assign(:post_its, post_its)
+     |> assign(:bot_pins, %{})
+     |> assign(:pinning_bot_id, nil)}
   end
 
   @impl true
@@ -107,8 +109,11 @@ defmodule LabyrinthWeb.GameLive do
       end
 
     case GameServer.take_turn(socket.assigns.game_id, socket.assigns.player_id, action) do
-      {:ok, engine, summary} ->
-        {:noreply, maybe_handle_disorientation(socket, engine, summary)}
+      {:ok, engine, _summary} ->
+        {:noreply,
+         socket
+         |> assign(:engine, engine)
+         |> assign(:action_mode, :move)}
 
       {:error, :not_your_turn} ->
         {:noreply, put_flash(socket, :error, "It is not your turn yet! Please wait.")}
@@ -121,8 +126,11 @@ defmodule LabyrinthWeb.GameLive do
   @impl true
   def handle_event("pass_turn", _params, socket) do
     case GameServer.take_turn(socket.assigns.game_id, socket.assigns.player_id, :pass) do
-      {:ok, engine, summary} ->
-        {:noreply, maybe_handle_disorientation(socket, engine, summary)}
+      {:ok, engine, _summary} ->
+        {:noreply,
+         socket
+         |> assign(:engine, engine)
+         |> assign(:action_mode, :move)}
 
       {:error, reason} ->
         {:noreply, put_flash(socket, :error, "Pass failed: #{inspect(reason)}")}
@@ -169,8 +177,11 @@ defmodule LabyrinthWeb.GameLive do
           end
 
         case GameServer.take_turn(socket.assigns.game_id, socket.assigns.player_id, action) do
-          {:ok, engine, summary} ->
-            {:noreply, maybe_handle_disorientation(socket, engine, summary)}
+          {:ok, engine, _summary} ->
+            {:noreply,
+             socket
+             |> assign(:engine, engine)
+             |> assign(:action_mode, :move)}
 
           _ ->
             {:noreply, socket}
@@ -178,8 +189,11 @@ defmodule LabyrinthWeb.GameLive do
 
       key == " " ->
         case GameServer.take_turn(socket.assigns.game_id, socket.assigns.player_id, :pass) do
-          {:ok, engine, summary} ->
-            {:noreply, maybe_handle_disorientation(socket, engine, summary)}
+          {:ok, engine, _summary} ->
+            {:noreply,
+             socket
+             |> assign(:engine, engine)
+             |> assign(:action_mode, :move)}
 
           _ ->
             {:noreply, socket}
@@ -296,49 +310,170 @@ defmodule LabyrinthWeb.GameLive do
     {:noreply, assign(socket, :post_its, updated)}
   end
 
-  defp maybe_handle_disorientation(socket, engine, summary) do
-    if summary && summary.result in ["pit", "teleport"] do
-      game_id = Map.get(socket.assigns, :game_id) || engine.id
-      player_id = Map.get(socket.assigns, :player_id)
-      existing_post_its = Map.get(socket.assigns, :post_its, [])
+  @impl true
+  def handle_event("select_pin_bot", %{"bot_id" => bot_id}, socket) do
+    bot = Enum.find(socket.assigns.engine.players, fn p -> p.id == bot_id end)
 
-      if player_id do
-        disorientation_title =
-          "Disorientation Note: #{String.upcase(summary.result)} (Round #{engine.round_number})"
+    if bot do
+      {:noreply,
+       socket
+       |> assign(:pinning_bot_id, bot_id)
+       |> put_flash(
+         :info,
+         "📌 Pin Mode Active! Click any cell on the main map to anchor #{bot.name}'s relative origin (0, 0)."
+       )}
+    else
+      {:noreply, socket}
+    end
+  end
 
-        color = if summary.result == "pit", do: "pink", else: "blue"
+  @impl true
+  def handle_event("unpin_bot", %{"bot_id" => bot_id}, socket) do
+    updated_pins = Map.delete(socket.assigns[:bot_pins] || %{}, bot_id)
 
-        new_post_it = %{
-          game_id: game_id,
-          player_id: player_id,
-          title: disorientation_title,
-          color: color,
-          x_pos: 10 + length(existing_post_its) * 15,
-          y_pos: 10 + length(existing_post_its) * 15,
-          text:
-            "Disoriented by #{summary.result}! Sketch local corridor layout and click 'Stick to Map' to overlay hints.",
-          grid_marks: %{},
-          is_stuck: true
-        }
+    {:noreply,
+     socket
+     |> assign(:bot_pins, updated_pins)
+     |> put_flash(:info, "Unpinned all fragment snapshots for this bot.")}
+  end
 
-        case Games.save_post_it(new_post_it) do
-          {:ok, saved} ->
-            socket
-            |> assign(:engine, engine)
-            |> assign(:post_its, existing_post_its ++ [saved])
-            |> put_flash(
-              :info,
-              "🌀 Disorientation! A new Post-It note popped up to help you reconstruct your path."
-            )
+  @impl true
+  def handle_event("remove_snapshot", %{"bot_id" => bot_id, "snap_id" => snap_id}, socket) do
+    existing_snaps = Map.get(socket.assigns[:bot_pins] || %{}, bot_id, [])
+    updated_snaps = Enum.reject(existing_snaps, fn s -> s.id == snap_id end)
 
-          _ ->
-            assign(socket, :engine, engine)
-        end
+    updated_pins =
+      if updated_snaps == [] do
+        Map.delete(socket.assigns[:bot_pins] || %{}, bot_id)
       else
-        assign(socket, :engine, engine)
+        Map.put(socket.assigns[:bot_pins] || %{}, bot_id, updated_snaps)
+      end
+
+    {:noreply,
+     socket
+     |> assign(:bot_pins, updated_pins)
+     |> put_flash(:info, "Removed pinned fragment snapshot.")}
+  end
+
+  @impl true
+  def handle_event("cell_click", %{"x" => x_str, "y" => y_str}, socket) do
+    pinning_bot_id = socket.assigns[:pinning_bot_id]
+
+    if pinning_bot_id do
+      x = String.to_integer(x_str)
+      y = String.to_integer(y_str)
+      bot = Enum.find(socket.assigns.engine.players, fn p -> p.id == pinning_bot_id end)
+      bot_name = if bot, do: bot.name, else: pinning_bot_id
+
+      snapshot = %{
+        id: Ecto.UUID.generate(),
+        bot_id: pinning_bot_id,
+        bot_name: bot_name,
+        anchor: {x, y},
+        visited_rel_cells: Map.get(bot || %{}, :visited_rel_cells, MapSet.new([{0, 0}])),
+        known_rel_walls: Map.get(bot || %{}, :known_rel_walls, MapSet.new()),
+        discovered_rel_features: Map.get(bot || %{}, :discovered_rel_features, %{})
+      }
+
+      existing_snaps = Map.get(socket.assigns[:bot_pins] || %{}, pinning_bot_id, [])
+
+      updated_pins =
+        Map.put(socket.assigns[:bot_pins] || %{}, pinning_bot_id, existing_snaps ++ [snapshot])
+
+      # Reset the bot's active relative tracking in GameServer so future steps start a fresh (0,0) relative fragment!
+      case GameServer.reset_bot_rel_tracking(socket.assigns.game_id, pinning_bot_id) do
+        {:ok, updated_engine} ->
+          {:noreply,
+           socket
+           |> assign(:engine, updated_engine)
+           |> assign(:bot_pins, updated_pins)
+           |> assign(:pinning_bot_id, nil)
+           |> put_flash(
+             :info,
+             "📌 Pinned #{bot_name}'s fragment at (#{x}, #{y})! A new relative fragment tracking has started."
+           )}
+
+        _ ->
+          {:noreply,
+           socket
+           |> assign(:bot_pins, updated_pins)
+           |> assign(:pinning_bot_id, nil)}
       end
     else
-      assign(socket, :engine, engine)
+      {:noreply, socket}
+    end
+  end
+
+  defp bot_color_theme(bot_id_or_name) do
+    idx =
+      case Regex.run(~r/\d+/, to_string(bot_id_or_name)) do
+        [num_str] -> String.to_integer(num_str)
+        _ -> 1
+      end
+
+    case rem(max(0, idx - 1), 5) do
+      0 ->
+        %{
+          id: 1,
+          name: "amber",
+          card_bg: "bg-amber-100 text-slate-950 border-amber-400",
+          badge: "bg-amber-500 text-slate-950",
+          text_color: "text-amber-400",
+          hex: "#f59e0b"
+        }
+
+      1 ->
+        %{
+          id: 2,
+          name: "sky",
+          card_bg: "bg-sky-100 text-slate-950 border-sky-400",
+          badge: "bg-sky-500 text-slate-950",
+          text_color: "text-sky-400",
+          hex: "#38bdf8"
+        }
+
+      2 ->
+        %{
+          id: 3,
+          name: "emerald",
+          card_bg: "bg-emerald-100 text-slate-950 border-emerald-400",
+          badge: "bg-emerald-500 text-slate-950",
+          text_color: "text-emerald-400",
+          hex: "#34d399"
+        }
+
+      3 ->
+        %{
+          id: 4,
+          name: "purple",
+          card_bg: "bg-purple-100 text-slate-950 border-purple-400",
+          badge: "bg-purple-500 text-slate-950",
+          text_color: "text-purple-400",
+          hex: "#c084fc"
+        }
+
+      4 ->
+        %{
+          id: 5,
+          name: "rose",
+          card_bg: "bg-rose-100 text-slate-950 border-rose-400",
+          badge: "bg-rose-500 text-slate-950",
+          text_color: "text-rose-400",
+          hex: "#fb7185"
+        }
+    end
+  end
+
+  defp cell_feature_icon(cell_pos, engine) do
+    cond do
+      cell_pos == engine.entrance -> "🚪"
+      cell_pos == engine.exit -> "🏁"
+      cell_pos == engine.treasure and not Enum.any?(engine.players, & &1.has_treasure) -> "💎"
+      cell_pos == Map.get(engine, :hospital) -> "🏥"
+      cell_pos == Map.get(engine, :arsenal) -> "⚔️"
+      has_portal?(engine.teleporters, cell_pos) -> "🌀"
+      has_pit?(engine.pits, cell_pos) -> "🕳"
+      true -> nil
     end
   end
 
@@ -612,6 +747,20 @@ defmodule LabyrinthWeb.GameLive do
                 <% end %>
               <% end %>
 
+              <% me = current_player(@engine, @player_id) %>
+              <% minotaur_pos = @engine.minotaur %>
+              <% stink_detected? =
+                me != nil and me.status in [:active, :wounded] and minotaur_pos != nil and
+                  abs(me.x - elem(minotaur_pos, 0)) + abs(me.y - elem(minotaur_pos, 1)) <= 2 %>
+
+              <%= if stink_detected? do %>
+                <div class="w-full bg-amber-500/20 border border-amber-500/50 rounded-xl p-3 text-center shadow-lg animate-pulse flex items-center justify-center gap-2 text-amber-300 font-bold text-xs mb-3">
+                  <span class="text-base">🦨</span>
+                  <span>SENSORY WARNING: You smelled the Minotaur's foul stink wafting nearby! (Within 2 cells)</span>
+                  <span class="text-base">👹</span>
+                </div>
+              <% end %>
+
               <div class="mb-3 text-xs text-slate-400 flex items-center justify-between w-full">
                 <span>{cond do
                   @engine.status == :finished -> "🏁 Revealed Game Over Map"
@@ -627,6 +776,43 @@ defmodule LabyrinthWeb.GameLive do
               <% reveal_full_map? = @gm_mode or @engine.status == :finished %>
               <% stuck_marks_map = collect_stuck_marks(@post_its) %>
 
+              <% bot_pins = @bot_pins || %{} %>
+              <% all_snapshots = Enum.flat_map(bot_pins, fn {_bot_id, snaps} -> snaps end) %>
+
+              <% pinned_bot_walls =
+                Enum.reduce(all_snapshots, MapSet.new(), fn snap, acc ->
+                  {ox, oy} = snap.anchor
+                  rel_walls = snap.known_rel_walls
+
+                  projected =
+                    Enum.map(rel_walls, fn {{rx1, ry1}, {rx2, ry2}} ->
+                      normalize_wall({ox + rx1, oy + ry1}, {ox + rx2, oy + ry2})
+                    end)
+
+                  MapSet.union(acc, MapSet.new(projected))
+                end) %>
+
+              <% pinned_bot_visited =
+                Enum.reduce(all_snapshots, MapSet.new(), fn snap, acc ->
+                  {ox, oy} = snap.anchor
+                  rel_visited = snap.visited_rel_cells
+                  projected = Enum.map(rel_visited, fn {rx, ry} -> {ox + rx, oy + ry} end)
+                  MapSet.union(acc, MapSet.new(projected))
+                end) %>
+
+              <% pinned_bot_features =
+                Enum.reduce(all_snapshots, %{}, fn snap, acc ->
+                  {ox, oy} = snap.anchor
+                  rel_feats = snap.discovered_rel_features
+
+                  projected =
+                    Enum.reduce(rel_feats, %{}, fn {{rx, ry}, feat}, f_acc ->
+                      Map.put(f_acc, {ox + rx, oy + ry}, {snap.bot_id, snap.bot_name, feat})
+                    end)
+
+                  Map.merge(acc, projected)
+                end) %>
+
               <div
                 class="grid gap-1 bg-slate-950 p-3 rounded-xl border border-slate-800 shadow-inner"
                 style={"grid-template-columns: repeat(#{@engine.width}, minmax(0, 1fr));"}
@@ -634,8 +820,11 @@ defmodule LabyrinthWeb.GameLive do
                 <%= for y <- 0..(@engine.height - 1) do %>
                   <%= for x <- 0..(@engine.width - 1) do %>
                     <% cell_pos = {x, y} %>
-                    <% is_visited = MapSet.member?(visited_set, cell_pos) or reveal_full_map? %>
+                    <% is_visited =
+                      MapSet.member?(visited_set, cell_pos) or
+                        MapSet.member?(pinned_bot_visited, cell_pos) or reveal_full_map? %>
                     <% stuck_symbol = Map.get(stuck_marks_map, "#{x},#{y}") %>
+                    <% pinned_bot_feat = Map.get(pinned_bot_features, cell_pos) %>
                     <% active_players_here =
                       Enum.filter(@engine.players, fn p ->
                         {p.x, p.y} == cell_pos and p.status in [:active, :wounded, :stunned]
@@ -648,7 +837,11 @@ defmodule LabyrinthWeb.GameLive do
                     <% is_minotaur_here = reveal_full_map? and @engine.minotaur == cell_pos %>
 
                     <%!-- Cell Wall boundaries --%>
-                    <% wall_source = if(reveal_full_map?, do: @engine.walls, else: known_walls_set) %>
+                    <% wall_source =
+                      if(reveal_full_map?,
+                        do: @engine.walls,
+                        else: MapSet.union(known_walls_set, pinned_bot_walls)
+                      ) %>
                     <% destroyed_wall_source = Map.get(@engine, :destroyed_walls, MapSet.new()) %>
                     <% n_wall =
                       MapSet.member?(wall_source, normalize_wall(cell_pos, {x, y - 1})) or y == 0 %>
@@ -671,24 +864,34 @@ defmodule LabyrinthWeb.GameLive do
                       MapSet.member?(destroyed_wall_source, normalize_wall(cell_pos, {x + 1, y})) %>
                     <% has_debris? = n_destroyed or s_destroyed or w_destroyed or e_destroyed %>
 
-                    <div class={[
-                      "w-10 h-10 sm:w-12 sm:h-12 rounded flex items-center justify-center text-sm relative transition-all border",
-                      if(is_visited,
-                        do: "bg-slate-900 border-slate-800",
-                        else: "bg-slate-950/80 border-slate-900/50 opacity-40"
-                      ),
-                      if(is_me_here and me.status in [:active, :wounded, :stunned],
-                        do: "ring-2 ring-amber-400 bg-amber-500/10"
-                      ),
-                      if(n_wall, do: "border-t-2 border-t-amber-600/80"),
-                      if(s_wall, do: "border-b-2 border-b-amber-600/80"),
-                      if(w_wall, do: "border-l-2 border-l-amber-600/80"),
-                      if(e_wall, do: "border-r-2 border-r-amber-600/80"),
-                      if(n_destroyed, do: "border-t-2 border-dashed border-t-orange-700/80"),
-                      if(s_destroyed, do: "border-b-2 border-dashed border-b-orange-700/80"),
-                      if(w_destroyed, do: "border-l-2 border-dashed border-l-orange-700/80"),
-                      if(e_destroyed, do: "border-r-2 border-dashed border-r-orange-700/80")
-                    ]}>
+                    <div
+                      phx-click={if @pinning_bot_id != nil, do: "cell_click", else: nil}
+                      phx-value-x={x}
+                      phx-value-y={y}
+                      class={[
+                        "w-10 h-10 sm:w-12 sm:h-12 rounded flex items-center justify-center text-sm relative transition-all border",
+                        if(@pinning_bot_id != nil,
+                          do:
+                            "cursor-pointer hover:ring-2 hover:ring-amber-400 bg-amber-500/20 animate-pulse",
+                          else: ""
+                        ),
+                        if(is_visited,
+                          do: "bg-slate-900 border-slate-800",
+                          else: "bg-slate-950/80 border-slate-900/50 opacity-40"
+                        ),
+                        if(is_me_here and me.status in [:active, :wounded, :stunned],
+                          do: "bg-amber-500/10"
+                        ),
+                        if(n_wall, do: "border-t-2 border-t-amber-600/80"),
+                        if(s_wall, do: "border-b-2 border-b-amber-600/80"),
+                        if(w_wall, do: "border-l-2 border-l-amber-600/80"),
+                        if(e_wall, do: "border-r-2 border-r-amber-600/80"),
+                        if(n_destroyed, do: "border-t-2 border-dashed border-t-orange-700/80"),
+                        if(s_destroyed, do: "border-b-2 border-dashed border-b-orange-700/80"),
+                        if(w_destroyed, do: "border-l-2 border-dashed border-l-orange-700/80"),
+                        if(e_destroyed, do: "border-r-2 border-dashed border-r-orange-700/80")
+                      ]}
+                    >
                       <%= if stuck_symbol != nil and stuck_symbol != "" do %>
                         <span
                           class="absolute -top-1 -right-1 text-[9px] font-bold px-1 py-0.2 bg-amber-400 text-slate-950 rounded-full shadow border border-amber-300 font-mono z-10 animate-pulse"
@@ -720,17 +923,47 @@ defmodule LabyrinthWeb.GameLive do
                             </span>
                           <% active_players_here != [] -> %>
                             <% any_wounded? = Enum.any?(active_players_here, &(&1.status == :wounded)) %>
+                            <% first_p = List.first(active_players_here) %>
+                            <% p_theme =
+                              if(first_p && first_p.is_bot,
+                                do: bot_color_theme(first_p.id),
+                                else: nil
+                              ) %>
+
                             <span
-                              class="text-base"
+                              class={[
+                                "text-base font-bold rounded px-0.5 shadow-sm",
+                                if(p_theme, do: p_theme.badge, else: "")
+                              ]}
                               title={Enum.map_join(active_players_here, ", ", & &1.name)}
                             >
                               {if any_wounded?, do: "🩸👤", else: "👤"}
                             </span>
                           <% eliminated_players_here != [] -> %>
+                            <% first_elim = List.first(eliminated_players_here) %>
+                            <% elim_theme =
+                              if(first_elim && first_elim.is_bot,
+                                do: bot_color_theme(first_elim.id),
+                                else: nil
+                              ) %>
+                            <% feature_icon = cell_feature_icon(cell_pos, @engine) %>
+
                             <span
-                              class="text-base"
+                              class={[
+                                "text-base font-bold rounded px-0.5 opacity-90 shadow-sm flex items-center justify-center gap-0.5",
+                                if(elim_theme,
+                                  do: elim_theme.badge,
+                                  else: "bg-slate-800 text-rose-400 border border-slate-700"
+                                )
+                              ]}
                               title={"Eliminated: #{Enum.map_join(eliminated_players_here, ", ", & &1.name)}"}
-                            >💀</span>
+                            >
+                              <%= if elim_theme do %>
+                                {if feature_icon, do: "#{feature_icon}💀", else: "💀"}
+                              <% else %>
+                                {if feature_icon, do: "#{feature_icon}💀🤠", else: "💀🤠"}
+                              <% end %>
+                            </span>
                           <% cell_pos == @engine.entrance -> %>
                             <span class="text-xs font-bold text-emerald-400">🚪</span>
                           <% cell_pos == @engine.exit -> %>
@@ -745,6 +978,26 @@ defmodule LabyrinthWeb.GameLive do
                             <span class="text-base animate-pulse" title="Teleporter Portal">🌀</span>
                           <% cell_pos in @engine.pits -> %>
                             <span class="text-base">🕳</span>
+                          <% pinned_bot_feat != nil -> %>
+                            <% {b_id, b_name, b_feat} = pinned_bot_feat %>
+                            <% b_theme = bot_color_theme(b_id) %>
+                            <span
+                              class={[
+                                "text-xs flex items-center justify-center font-bold px-1 py-0.5 rounded shadow-sm",
+                                b_theme.badge
+                              ]}
+                              title={"Pinned from #{b_name}: #{b_feat}"}
+                            >
+                              📌{case b_feat do
+                                "pit" -> "🕳"
+                                "teleport" -> "🌀"
+                                "hospital" -> "🏥"
+                                "arsenal" -> "⚔️"
+                                "treasure" -> "💎"
+                                "exit" -> "🏁"
+                                _ -> "❓"
+                              end}
+                            </span>
                           <% has_debris? -> %>
                             <span class="text-[10px] opacity-75" title="Demolished Wall Debris">🧱💥</span>
                           <% true -> %>
@@ -895,8 +1148,179 @@ defmodule LabyrinthWeb.GameLive do
             </div>
           </div>
 
-          <%!-- Right Column: Telemetry Log, Roster & Interactive Post-It Hints (4 cols) --%>
+          <%!-- Right Column: Interactive Bot Post-Its, Telemetry Log & Roster (4 cols) --%>
           <div class="lg:col-span-4 space-y-6">
+            <%!-- Bot Expedition Sub-Grid Post-Its --%>
+            <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-xl space-y-4">
+              <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+                <h3 class="text-sm font-bold text-slate-100 flex items-center gap-2">
+                  <.icon name="hero-document-duplicate" class="w-4 h-4 text-amber-400" />
+                  Bot Expedition Post-Its
+                </h3>
+                <span class="text-[11px] font-mono text-slate-400">Blind relative fragments</span>
+              </div>
+
+              <% bot_players = Enum.filter(@engine.players, & &1.is_bot) %>
+
+              <div class="space-y-4 max-h-[600px] overflow-y-auto pr-1">
+                <%= if bot_players == [] do %>
+                  <div class="p-6 text-center bg-slate-950/60 rounded-lg border border-dashed border-slate-800 text-slate-400 text-xs">
+                    No bots in this expedition. Add bots from the lobby or control panel to trace their blind relative fragments!
+                  </div>
+                <% end %>
+
+                <%= for bot <- bot_players do %>
+                  <% b_theme = bot_color_theme(bot.id) %>
+                  <% bot_snaps = Map.get(@bot_pins, bot.id, []) %>
+                  <% is_selecting_pin = @pinning_bot_id == bot.id %>
+
+                  <div class={[
+                    "rounded-xl p-4 shadow-lg border space-y-3 relative transition-all",
+                    if(is_selecting_pin,
+                      do: "bg-amber-100 border-amber-500 ring-2 ring-amber-400 text-slate-950",
+                      else: b_theme.card_bg
+                    )
+                  ]}>
+                    <div class="flex items-center justify-between border-b border-slate-950/20 pb-2">
+                      <div class="flex items-center gap-2">
+                        <span class="font-bold text-xs uppercase tracking-wide truncate max-w-[150px]">🤖 {bot.name}</span>
+                        <span class={[
+                          "px-1.5 py-0.5 text-[9px] font-bold rounded font-mono shadow-sm",
+                          b_theme.badge
+                        ]}>
+                          BOT #{b_theme.id}
+                        </span>
+                      </div>
+
+                      <button
+                        phx-click="select_pin_bot"
+                        phx-value-bot_id={bot.id}
+                        class={[
+                          "px-2 py-1 text-[10px] font-bold rounded shadow-sm transition-all border",
+                          if(is_selecting_pin,
+                            do: "bg-amber-600 text-white border-amber-700 animate-pulse",
+                            else: "bg-slate-900 text-amber-300 border-slate-800 hover:bg-slate-950"
+                          )
+                        ]}
+                      >
+                        📌 {if is_selecting_pin, do: "Click Map Cell...", else: "Pin Active Fragment"}
+                      </button>
+                    </div>
+
+                    <%!-- Pinned Snapshots List --%>
+                    <%= if bot_snaps != [] do %>
+                      <div class="space-y-1 bg-slate-950/20 p-2 rounded border border-slate-950/30 text-[10px]">
+                        <div class="font-bold uppercase opacity-80 flex items-center justify-between">
+                          <span>📌 Pinned Snapshots ({length(bot_snaps)}):</span>
+                          <button
+                            phx-click="unpin_bot"
+                            phx-value-bot_id={bot.id}
+                            class="text-rose-700 hover:underline font-bold text-[9px]"
+                          >
+                            Clear All
+                          </button>
+                        </div>
+                        <div class="space-y-1">
+                          <%= for snap <- bot_snaps do %>
+                            <div class="flex items-center justify-between bg-slate-950/40 p-1.5 rounded font-mono text-[10px]">
+                              <span>📌 Anchor ({elem(snap.anchor, 0)}, {elem(snap.anchor, 1)})</span>
+                              <button
+                                phx-click="remove_snapshot"
+                                phx-value-bot_id={bot.id}
+                                phx-value-snap_id={snap.id}
+                                class="text-slate-700 hover:text-rose-700 font-bold px-1"
+                                title="Remove Snapshot"
+                              >
+                                ✕
+                              </button>
+                            </div>
+                          <% end %>
+                        </div>
+                      </div>
+                    <% end %>
+
+                    <% rel_visited = Map.get(bot, :visited_rel_cells, MapSet.new([{0, 0}])) %>
+                    <% rel_walls = Map.get(bot, :known_rel_walls, MapSet.new()) %>
+                    <% rel_feats = Map.get(bot, :discovered_rel_features, %{}) %>
+
+                    <% rel_xs = Enum.map(rel_visited, &elem(&1, 0)) %>
+                    <% rel_ys = Enum.map(rel_visited, &elem(&1, 1)) %>
+                    <% min_rx = Enum.min(rel_xs ++ [-2]) %>
+                    <% max_rx = Enum.max(rel_xs ++ [2]) %>
+                    <% min_ry = Enum.min(rel_ys ++ [-2]) %>
+                    <% max_ry = Enum.max(rel_ys ++ [2]) %>
+
+                    <div class="space-y-1">
+                      <div class="text-[10px] font-semibold opacity-75">
+                        Active Relative Fragment (New Tracking from 0,0):
+                      </div>
+                      <div class="p-2 bg-slate-950/80 rounded-lg border border-slate-900 overflow-x-auto flex items-center justify-center">
+                        <div
+                          class="grid gap-0.5"
+                          style={"grid-template-columns: repeat(#{max_rx - min_rx + 1}, minmax(0, 1fr));"}
+                        >
+                          <%= for ry <- min_ry..max_ry do %>
+                            <%= for rx <- min_rx..max_rx do %>
+                              <% r_pos = {rx, ry} %>
+                              <% is_r_visited = MapSet.member?(rel_visited, r_pos) %>
+                              <% r_feat = Map.get(rel_feats, r_pos) %>
+                              <% is_bot_current =
+                                Map.get(bot, :rel_x, 0) == rx and Map.get(bot, :rel_y, 0) == ry %>
+
+                              <% n_rwall =
+                                MapSet.member?(rel_walls, normalize_wall(r_pos, {rx, ry - 1})) %>
+                              <% s_rwall =
+                                MapSet.member?(rel_walls, normalize_wall(r_pos, {rx, ry + 1})) %>
+                              <% w_rwall =
+                                MapSet.member?(rel_walls, normalize_wall(r_pos, {rx - 1, ry})) %>
+                              <% e_rwall =
+                                MapSet.member?(rel_walls, normalize_wall(r_pos, {rx + 1, ry})) %>
+
+                              <div class={[
+                                "w-6 h-6 rounded flex items-center justify-center text-[10px] relative transition-all border",
+                                if(is_r_visited,
+                                  do: "bg-slate-900 border-slate-800 text-white",
+                                  else: "bg-slate-950 opacity-30 border-slate-900"
+                                ),
+                                if(is_bot_current, do: "ring-1 ring-amber-400 bg-amber-500/20"),
+                                if(n_rwall, do: "border-t-2 border-t-amber-500"),
+                                if(s_rwall, do: "border-b-2 border-b-amber-500"),
+                                if(w_rwall, do: "border-l-2 border-l-amber-500"),
+                                if(e_rwall, do: "border-r-2 border-r-amber-500")
+                              ]}>
+                                <%= cond do %>
+                                  <% is_bot_current -> %>
+                                    <span>🤖</span>
+                                  <% r_feat == "pit" -> %>
+                                    <span>🕳</span>
+                                  <% r_feat == "teleport" -> %>
+                                    <span>🌀</span>
+                                  <% r_feat == "hospital" -> %>
+                                    <span>🏥</span>
+                                  <% r_feat == "arsenal" -> %>
+                                    <span>⚔️</span>
+                                  <% r_feat == "treasure" -> %>
+                                    <span>💎</span>
+                                  <% r_feat == "exit" -> %>
+                                    <span>🏁</span>
+                                  <% rx == 0 and ry == 0 -> %>
+                                    <span class="text-[8px] font-mono text-emerald-400 font-bold">0,0</span>
+                                  <% is_r_visited -> %>
+                                    <span class="w-1.5 h-1.5 rounded-full bg-slate-600"></span>
+                                  <% true -> %>
+                                    <span></span>
+                                <% end %>
+                              </div>
+                            <% end %>
+                          <% end %>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                <% end %>
+              </div>
+            </div>
+
             <%!-- Event Feed & Auditory Log --%>
             <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-xl space-y-3">
               <h3 class="text-sm font-bold text-slate-200 flex items-center gap-2">
@@ -935,6 +1359,7 @@ defmodule LabyrinthWeb.GameLive do
                   <% is_online = Map.has_key?(@presences, p.id) or p.is_bot %>
                   <% is_current_turn =
                     active_turn_player(@engine) != nil and active_turn_player(@engine).id == p.id %>
+                  <% p_theme = if(p.is_bot, do: bot_color_theme(p.id), else: nil) %>
 
                   <div class={[
                     "p-2.5 rounded-lg border text-xs flex items-center justify-between transition-all",
@@ -948,9 +1373,17 @@ defmodule LabyrinthWeb.GameLive do
                         "w-2 h-2 rounded-full",
                         if(is_online, do: "bg-emerald-400 animate-pulse", else: "bg-slate-600")
                       ]}></span>
-                      <span class="font-bold text-white">{p.name}</span>
+                      <span class={[
+                        "font-bold",
+                        if(p_theme, do: p_theme.text_color, else: "text-white")
+                      ]}>{p.name}</span>
                       <%= if p.is_bot do %>
-                        <span class="text-[10px] bg-slate-800 text-amber-300 px-1.5 py-0.5 rounded font-mono">BOT</span>
+                        <span class={[
+                          "text-[10px] font-bold px-1.5 py-0.5 rounded font-mono shadow-sm",
+                          p_theme.badge
+                        ]}>
+                          BOT #{p_theme.id}
+                        </span>
                       <% end %>
                     </div>
                     <div class="flex items-center gap-2 font-mono text-[11px]">
@@ -974,145 +1407,6 @@ defmodule LabyrinthWeb.GameLive do
                 <% end %>
               </div>
             </div>
-
-            <%!-- Interactive Post-it Notes Canvas Panel --%>
-            <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-xl space-y-4">
-              <div class="flex items-center justify-between border-b border-slate-800 pb-3">
-                <h3 class="text-sm font-bold text-slate-100 flex items-center gap-2">
-                  <.icon name="hero-document-duplicate" class="w-4 h-4 text-amber-400" />
-                  Your Post-It Map Hints
-                </h3>
-                <div class="flex items-center gap-1">
-                  <button
-                    phx-click="add_post_it"
-                    phx-value-color="yellow"
-                    class="w-5 h-5 rounded bg-amber-300 hover:ring-2 hover:ring-white transition-all"
-                    title="Add Yellow Post-It"
-                  ></button>
-                  <button
-                    phx-click="add_post_it"
-                    phx-value-color="pink"
-                    class="w-5 h-5 rounded bg-pink-400 hover:ring-2 hover:ring-white transition-all"
-                    title="Add Pink Post-It"
-                  ></button>
-                  <button
-                    phx-click="add_post_it"
-                    phx-value-color="green"
-                    class="w-5 h-5 rounded bg-emerald-300 hover:ring-2 hover:ring-white transition-all"
-                    title="Add Green Post-It"
-                  ></button>
-                  <button
-                    phx-click="add_post_it"
-                    phx-value-color="blue"
-                    class="w-5 h-5 rounded bg-sky-300 hover:ring-2 hover:ring-white transition-all"
-                    title="Add Blue Post-It"
-                  ></button>
-                </div>
-              </div>
-
-              <div class="space-y-4 max-h-[600px] overflow-y-auto pr-1">
-                <%= if @post_its == [] do %>
-                  <div class="p-6 text-center bg-slate-950/60 rounded-lg border border-dashed border-slate-800 text-slate-400 text-xs">
-                    No Post-its drawn yet. Click a color button above to add a draft note!
-                  </div>
-                <% end %>
-
-                <%= for post_it <- @post_its do %>
-                  <% color_bg =
-                    case post_it.color do
-                      "pink" -> "bg-pink-300 text-slate-950"
-                      "green" -> "bg-emerald-200 text-slate-950"
-                      "blue" -> "bg-sky-200 text-slate-950"
-                      _ -> "bg-amber-200 text-slate-950"
-                    end %>
-
-                  <div class={[
-                    "rounded-xl p-4 shadow-lg border border-slate-700/50 space-y-3 relative transition-transform hover:-translate-y-0.5",
-                    color_bg
-                  ]}>
-                    <div class="flex items-center justify-between border-b border-slate-950/20 pb-2">
-                      <span class="font-bold text-xs uppercase tracking-wide truncate max-w-[150px]">{post_it.title}</span>
-                      <div class="flex items-center gap-1.5">
-                        <button
-                          phx-click="toggle_stick_post_it"
-                          phx-value-id={post_it.id}
-                          class={[
-                            "px-2 py-0.5 text-[10px] font-bold rounded transition-all flex items-center gap-1 shadow-sm border",
-                            if(post_it.is_stuck,
-                              do:
-                                "bg-slate-950 text-amber-300 border-amber-400 font-extrabold ring-1 ring-amber-400",
-                              else:
-                                "bg-slate-900/30 text-slate-900 border-slate-800/40 hover:bg-slate-900/50"
-                            )
-                          ]}
-                          title="Stick/Unstick this note's marks onto main game map"
-                        >
-                          📌 {if post_it.is_stuck, do: "Stuck to Map", else: "Stick to Map"}
-                        </button>
-
-                        <button
-                          phx-click="delete_post_it"
-                          phx-value-id={post_it.id}
-                          class="text-slate-700 hover:text-rose-700 text-xs font-bold px-1"
-                          title="Delete Note"
-                        >
-                          ✕
-                        </button>
-                      </div>
-                    </div>
-
-                    <%!-- Mini-Grid Sketch Canvas --%>
-                    <div>
-                      <span class="text-[10px] font-bold block mb-1 uppercase opacity-75">Mini-Grid Map Sketch (Stamp Symbols)</span>
-                      <div class="grid grid-cols-5 gap-1 bg-slate-950/20 p-2 rounded border border-slate-950/30">
-                        <%= for gy <- 0..4 do %>
-                          <%= for gx <- 0..4 do %>
-                            <% cell_key = "#{gx},#{gy}" %>
-                            <% symbol = Map.get(post_it.grid_marks || %{}, cell_key) %>
-
-                            <button
-                              phx-click="toggle_post_it_mark"
-                              phx-value-id={post_it.id}
-                              phx-value-cell={cell_key}
-                              phx-value-symbol="🧱"
-                              class="w-6 h-6 rounded bg-white/40 hover:bg-white/80 border border-slate-900/20 flex items-center justify-center text-xs font-bold transition-colors"
-                            >
-                              {symbol || ""}
-                            </button>
-                          <% end %>
-                        <% end %>
-                      </div>
-
-                      <%!-- Symbol Toolbar --%>
-                      <div class="flex items-center gap-1 mt-2">
-                        <%= for s <- ["🧱", "🚪", "💎", "🕳", "🌀", "👹", "❓"] do %>
-                          <button
-                            phx-click="toggle_post_it_mark"
-                            phx-value-id={post_it.id}
-                            phx-value-cell="0,0"
-                            phx-value-symbol={s}
-                            class="px-1.5 py-0.5 bg-white/50 hover:bg-white/90 text-xs rounded border border-slate-900/20"
-                          >
-                            {s}
-                          </button>
-                        <% end %>
-                      </div>
-                    </div>
-
-                    <%!-- Text Note Area --%>
-                    <div>
-                      <span class="text-[10px] font-bold block mb-1 uppercase opacity-75">Exploration Notes</span>
-                      <textarea
-                        phx-blur="update_post_it_text"
-                        phx-value-id={post_it.id}
-                        class="w-full h-16 bg-white/40 border border-slate-950/20 rounded p-1.5 text-xs text-slate-950 focus:bg-white/80 focus:outline-none"
-                        placeholder="Write wall hypotheses or sensory clues..."
-                      >{post_it.text}</textarea>
-                    </div>
-                  </div>
-                <% end %>
-              </div>
-            </div>
           </div>
         </div>
       </div>
@@ -1128,6 +1422,15 @@ defmodule LabyrinthWeb.GameLive do
     Enum.any?(teleporters || [], fn
       {p1, p2} -> p1 == pos or p2 == pos
       [p1, p2] -> p1 == pos or p2 == pos
+      _ -> false
+    end)
+  end
+
+  defp has_pit?(pits, pos) do
+    Enum.any?(pits || [], fn
+      {x, y} -> {x, y} == pos
+      %{"x" => x, "y" => y} -> {x, y} == pos
+      [x, y] -> {x, y} == pos
       _ -> false
     end)
   end

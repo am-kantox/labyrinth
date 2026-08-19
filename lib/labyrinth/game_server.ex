@@ -46,6 +46,10 @@ defmodule Labyrinth.GameServer do
     GenServer.call(via_tuple(game_id), {:force_turn, player_id})
   end
 
+  def reset_bot_rel_tracking(game_id, bot_id) do
+    GenServer.call(via_tuple(game_id), {:reset_bot_rel_tracking, bot_id})
+  end
+
   # Server Callbacks
 
   @impl true
@@ -62,6 +66,7 @@ defmodule Labyrinth.GameServer do
           bot_count = Keyword.get(opts, :bot_count, 1)
           pit_count = Keyword.get(opts, :pit_count, 3)
           teleport_count = Keyword.get(opts, :teleport_count, 5)
+          wall_density = Keyword.get(opts, :wall_density, 70)
           minotaur_enabled = Keyword.get(opts, :minotaur_enabled, true)
 
           e =
@@ -70,6 +75,7 @@ defmodule Labyrinth.GameServer do
               height: height,
               pit_count: pit_count,
               teleport_count: teleport_count,
+              wall_density: wall_density,
               minotaur_enabled: minotaur_enabled
             )
 
@@ -86,6 +92,7 @@ defmodule Labyrinth.GameServer do
                 bot_count: bot_count,
                 pit_count: pit_count,
                 teleport_count: teleport_count,
+                wall_density: wall_density,
                 minotaur_enabled: minotaur_enabled
               }
             })
@@ -211,6 +218,13 @@ defmodule Labyrinth.GameServer do
       {:error, reason} ->
         {:reply, {:error, reason}, engine}
     end
+  end
+
+  @impl true
+  def handle_call({:reset_bot_rel_tracking, bot_id}, _from, engine) do
+    engine_updated = Engine.reset_bot_rel_tracking(engine, bot_id)
+    broadcast_state(engine_updated)
+    {:reply, {:ok, engine_updated}, engine_updated}
   end
 
   defp broadcast_state(engine) do

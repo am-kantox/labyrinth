@@ -15,15 +15,17 @@ defmodule Labyrinth.Game.Generator do
     - `:teleport_count` (default 1)
   """
   def generate_map(opts \\ []) do
-    width = Keyword.get(opts, :width, 10)
-    height = Keyword.get(opts, :height, 10)
+    width = Keyword.get(opts, :width, 10) |> max(5) |> min(20)
+    height = Keyword.get(opts, :height, 10) |> max(5) |> min(20)
     pit_count = Keyword.get(opts, :pit_count, 3)
     teleport_count = Keyword.get(opts, :teleport_count, 5)
+    wall_density = Keyword.get(opts, :wall_density, 70)
 
-    do_generate(width, height, pit_count, teleport_count, 1)
+    do_generate(width, height, pit_count, teleport_count, wall_density, 1)
   end
 
-  defp do_generate(width, height, pit_count, teleport_count, attempt) when attempt <= 30 do
+  defp do_generate(width, height, pit_count, teleport_count, wall_density, attempt)
+       when attempt <= 30 do
     entrance = {0, 0}
 
     # Gather all perimeter edge cells and pick random exit cell (distinct from entrance)
@@ -39,10 +41,8 @@ defmodule Labyrinth.Game.Generator do
       |> Enum.shuffle()
       |> List.first()
 
-    # Generate initial maze walls using randomized Prim's/Kruskal's with path loops
-    all_walls = generate_maze_walls(width, height)
-    # Remove ~20-30% extra internal walls to create multiple strategic routes and loops
-    walls = add_maze_loops(all_walls, width, height)
+    # Generate initial maze walls using wall_density (0..100)
+    walls = generate_maze_walls(width, height, wall_density)
 
     # Pick candidate positions for key items (ensure distinct cells)
     all_cells = for x <- 0..(width - 1), y <- 0..(height - 1), do: {x, y}
@@ -86,11 +86,11 @@ defmodule Labyrinth.Game.Generator do
         {:ok, Map.put(map_data, :validation_info, validation_info)}
 
       {:error, _reason} ->
-        do_generate(width, height, pit_count, teleport_count, attempt + 1)
+        do_generate(width, height, pit_count, teleport_count, wall_density, attempt + 1)
     end
   end
 
-  defp do_generate(width, height, _pit_count, _teleport_count, _attempt) do
+  defp do_generate(width, height, _pit_count, _teleport_count, _wall_density, _attempt) do
     # Fallback to simple grid without internal walls if max attempts exceeded
     entrance = {0, 0}
     exit_cell = {width - 1, height - 1}
@@ -116,7 +116,7 @@ defmodule Labyrinth.Game.Generator do
     {:ok, Map.put(map_data, :validation_info, %{method: :fallback})}
   end
 
-  defp generate_maze_walls(width, height) do
+  defp generate_maze_walls(width, height, wall_density) do
     # Create grid of cells, connect adjacent with full internal walls
     edges =
       for x <- 0..(width - 1), y <- 0..(height - 1), into: [] do
@@ -126,35 +126,38 @@ defmodule Labyrinth.Game.Generator do
       end
       |> List.flatten()
 
-    # Kruskal's MST to form initial spanning maze
-    sets = for x <- 0..(width - 1), y <- 0..(height - 1), into: %{}, do: {{x, y}, {x, y}}
-    shuffled_edges = Enum.shuffle(edges)
+    density = max(0, min(100, wall_density))
 
-    {walls, _sets} =
-      Enum.reduce(shuffled_edges, {[], sets}, fn {p1, p2} = edge, {wall_acc, set_acc} ->
-        root1 = find_root(set_acc, p1)
-        root2 = find_root(set_acc, p2)
+    cond do
+      density == 0 ->
+        []
 
-        if root1 != root2 do
-          # Carve path (don't add to walls)
-          new_set_acc = Map.put(set_acc, root1, root2)
-          {wall_acc, new_set_acc}
-        else
-          # Keep as wall
-          {[edge | wall_acc], set_acc}
-        end
-      end)
+      density == 100 ->
+        edges
 
-    walls
-  end
+      true ->
+        # Kruskal's MST to form initial spanning maze
+        sets = for x <- 0..(width - 1), y <- 0..(height - 1), into: %{}, do: {{x, y}, {x, y}}
+        shuffled_edges = Enum.shuffle(edges)
 
-  defp add_maze_loops(walls, _width, _height) do
-    # Randomly remove ~25% of internal walls to create loops and multiple routes
-    remove_count = div(length(walls), 4)
+        {spanning_walls, _sets} =
+          Enum.reduce(shuffled_edges, {[], sets}, fn {p1, p2} = edge, {wall_acc, set_acc} ->
+            root1 = find_root(set_acc, p1)
+            root2 = find_root(set_acc, p2)
 
-    walls
-    |> Enum.shuffle()
-    |> Enum.drop(remove_count)
+            if root1 != root2 do
+              # Carve path (don't add to walls)
+              new_set_acc = Map.put(set_acc, root1, root2)
+              {wall_acc, new_set_acc}
+            else
+              # Keep as wall
+              {[edge | wall_acc], set_acc}
+            end
+          end)
+
+        target_count = round(length(spanning_walls) * (density / 100.0))
+        spanning_walls |> Enum.shuffle() |> Enum.take(target_count)
+    end
   end
 
   defp find_root(sets, elem) do
