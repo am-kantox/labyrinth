@@ -1,155 +1,197 @@
-# 🏰 Labyrinth — Multiuser Tactical Strategy Game
+# Labyrinth
 
-**Labyrinth** (also known as *"Hunt for the Minotaur"*) is a tactical turn-based exploration game built with **Elixir**, **Phoenix LiveView**, **Phoenix Presence**, **Finitomata** state machine flow, and **Prolog** logic validation powered by Robert Virding's [`erlog`](https://github.com/rvirding/erlog) engine.
+**Labyrinth** (also known as *"Hunt for the Minotaur"*) is a multi-user, tactical turn-based exploration game built with **Elixir**, **Phoenix LiveView**, **Phoenix Presence**, **Finitomata** state machine orchestration, and **Prolog** logic validation powered by Robert Virding's `:erlog` Erlang engine.
 
-Players explore a hidden, unseen maze step-by-step, receiving Game Master (GM) feedback and auditory echoes, drafting hypothetical wall layouts on interactive **Post-It notes**, demolishing internal walls with **Grenades 💣**, healing at the **Hospital 🏥**, restocking at the **Arsenal ⚔️**, locating the secret **Treasure 💎**, and escaping through the **Exit 🚪** before rival explorers or the roaming **Minotaur 👹** eliminate them.
-
----
-
-## 🎯 Game Objective & Mechanics
-
-1. **Blind Exploration & Fog-of-War:**
-   * Only the **Game Master (GM)** sees the full map layout.
-   * Players see only their own visited path and bumped walls.
-   * Toggle **"GM View"** at any time to inspect the secret master map, active players, and the Minotaur.
-
-2. **Turn Actions:**
-   * **🚶 Move:** Declare a direction: `North` (▲ / `W`), `South` (▼ / `S`), `West` (◄ / `A`), or `East` (► / `D`).
-   * **🎯 Shoot:** Fire a ranged gunshot up to 3 cells in a straight line (`E` hotkey). Shots hit walls or deal damage to rival explorers.
-   * **💣 Grenade:** Throw a grenade (`G` hotkey) to **demolish internal wall segments**, creating new strategic corridors! *(Note: The outer boundary surrounding the entire labyrinth is indestructible).*
-   * **⏩ Pass:** Skip your current turn (`Spacebar`).
-
-3. **Special Map Landmarks:**
-   * **🏥 Hospital / Medical Sanctuary:** Stepping onto the Hospital cell fully heals a **Wounded 🩸** player back to **Healthy 🤠 (3/3 HP)**.
-   * **⚔️ Arsenal / Armory:** Stepping onto the Arsenal cell fully reloads both **Bullets (3/3 🔫)** and **Grenades (3/3 💣)**.
-   * **🕳 Pit / Trap:** Falling into a pit stuns the player, skipping their next turn.
-   * **🌀 Teleporter:** Instantly warps the player to a paired portal cell.
-   * **💎 Treasure:** Claim the treasure and escape to the Exit.
-   * **🚪 / 🏁 Exit:** Escape carrying the treasure to win the expedition!
-
-4. **Wounded & Health System:**
-   * Explorers start with **3 HP** (`Healthy 🤠`).
-   * The first two gunshot hits deal 1 damage each, placing the explorer into **Wounded 🩸 status** (`2/3 HP` or `1/3 HP`).
-   * The 3rd gunshot hit reduces HP to 0 and eliminates the player (`Eliminated 💀`).
-
-5. **Sensory & Sound Echoes:**
-   * When players move, shoot, or throw grenades, nearby players (within 3 cells) receive auditory echoes in their GM feedback log:
-     * *“Player Alice: Footsteps heard from South”*
-     * *“Player Bob: A gunshot echoed from North”*
-     * *“Massive Explosion! Wall Demolished from West”*
-
-6. **The Minotaur 👹 (Optional):**
-   * Can be toggled on/off when creating a game.
-   * After each complete round of player turns, the Minotaur steps 1 cell closer to the nearest explorer.
-   * If the Minotaur enters a cell occupied by a player, that explorer is **eliminated** and drops any held treasure!
-
-7. **AI Computer Bots:**
-   * Add computer AI bots (`Labyrinth.Game.BotAI`) at room creation or during gameplay.
-   * Bots navigate fog-of-war memory, use BFS to reach the exit when holding treasure, and shoot visible opponents in line-of-sight.
+Players explore a hidden, unseen maze step-by-step under fog-of-war conditions. Guided by Game Master (GM) feedback, spatial auditory echoes, and custom draftable Post-It notes, players maneuver through corridors, demolish internal walls with grenades, recover at medical sanctuaries, restock weapons at armories, locate the hidden treasure, and escape before rival explorers or the roaming Minotaur eliminate them.
 
 ---
 
-## 🧠 Prolog Engine & Map Validation
+## Overview & Core Concept
 
-Labyrinth map reachability and connectivity rules are defined in Prolog (`priv/prolog/labyrinth_validator.pl`) and executed via **Robert Virding's `erlog` Erlang Prolog engine** (`rvirding/erlog`):
+In Labyrinth, the maze structure is hidden from explorers. Only the Game Master (GM) has visibility over the complete map layout, active player positions, and Minotaur movements. 
 
-* **Rule Validation:**
-  * Path exists from `Entrance` to `Treasure`.
-  * Path exists from `Entrance` to `Hospital 🏥`.
-  * Path exists from `Entrance` to `Arsenal ⚔️`.
-  * Path exists from `Treasure` to `Exit`.
-  * Path exists directly from `Entrance` to `Exit`.
-  * Non-blocked cells maintain graph connectivity (≥ 85% reachability).
-* **Dual Execution:**
-  1. **Primary:** `:erlog` OTP Erlang interpreter loaded at runtime.
-  2. **Secondary/Fallback:** System SWI-Prolog (`swipl`) CLI execution.
+Players navigate blindly, receiving positional logs and directionally muffled auditory feedback after every turn. To survive and conquer the maze, players must synthesize sensory clues, mark suspected layout paths on interactive Post-It notes, manage ammunition and explosives, and track rival explorers or AI computer bots across the labyrinth grid.
 
 ---
 
-## 📌 Bot Expedition Post-Its & Interactive Map Overlay
+## Architecture & Technology Stack
 
-Players can track AI computer bots using blind relative sub-grid fragments and pin them to the master map:
+The application is built on the Erlang OTP ecosystem using Phoenix v1.8 and a decoupled state architecture:
 
-* **🤖 Blind Relative Sub-Grid Fragments:**
-  * Each AI bot records its relative movements, bumped walls, and discovered landmarks (`🕳`, `🌀`, `🏥`, `⚔️`, `💎`, `🏁`) on a personal relative coordinate grid originating from `(0,0)`.
-  * Each bot is assigned a distinct theme color (**Amber 🟡, Sky Blue 🔵, Emerald Green 🟢, Purple 🟣, Rose Pink 🔴**) that styles its map icons, roster badges, and Post-It cards.
-
-* **📌 Snapshot Pinning & Fresh Fragment Reset:**
-  * Click **"📌 Pin Active Fragment"** on any bot's Post-It card and select a cell `{X, Y}` on the main map to anchor its explored fragment.
-  * Pinning saves a **fixed map snapshot overlay** on the game board and immediately resets the bot's active tracking to a **fresh relative fragment starting at `(0,0)`**, allowing players to continuously trace bot movements across multiple maze segments.
-  * Pinned snapshots project feature badges (`📌1 🕳`, `📌2 🌀`, `💎💀`, etc.) directly onto the main map grid.
-
-* **🦨 Minotaur Stink Perception & Configurable Wall Density:**
-  * **Minotaur Stink Detection (2-Cell Radius):** When an explorer comes within 2 cells of the Minotaur 👹, an animated warning banner (`🦨 SENSORY WARNING: You smelled the Minotaur's foul stink wafting nearby!`) is displayed.
-  * **Configurable Wall Density (0%..100%):** Set maze wall density during room creation from `0%` (open cavern) to `100%` (maximum wall density).
+* **Elixir & Phoenix LiveView (v1.8):** Delivers real-time reactive UI updates, dynamic map renderings, and client-side hotkey handling via co-located hooks without full page reloads.
+* **Phoenix Presence:** Manages active player lobbies, session connection states, and real-time room rosters.
+* **OTP GenServer & DynamicSupervisor:** Every active game runs in an isolated GenServer process managed by `Labyrinth.GameSupervisor` and registered via `Labyrinth.GameRegistry`.
+* **Finitomata State Machine (`Labyrinth.Game.TurnFSM`):** Enforces deterministic state transitions (`:lobby` -> `:awaiting_human` -> `:executing_bot` -> `:game_over`) and guarantees stall-free bot turn progression.
+* **Prolog Verification Engine (`Labyrinth.Prolog.Validator`):** Executes Robert Virding's `:erlog` Erlang Prolog interpreter with fallback graph reachability analysis and SWI-Prolog (`swipl`) CLI execution to validate maze solvability and reachability rules.
+* **PostgreSQL & Ecto:** Stores persistent game definitions, step-by-step turn audit records (`turns`), and player draft notes (`post_its`).
+* **Tailwind CSS v4:** Styled using Tailwind CSS v4 source imports and modern CSS utility classes.
 
 ---
 
-## 📜 History & Turn Replay
+## Game Objective & Mechanics
 
-Every move, shot, grenade explosion, sound echo, and position change is recorded in PostgreSQL (`turns` table).
-Visit `/history/:id` for any game to:
-* Step turn-by-turn through game history.
-* Use **Auto Play ⏯** or the step slider.
-* View side-by-side player log feed and full GM Master Map progression.
+### Exploration & Fog of War
+* **Explorer View:** Displays only visited cells, known bumped walls, player status, and held inventory. Unexplored tiles remain hidden in fog of war.
+* **GM View:** Toggleable master inspector view revealing all walls, traps, landmarks, active players, and the Minotaur.
+
+### Player Attributes & Statuses
+* **Health (❤):** Players start with 3 HP in Healthy status (🤠).
+* **Wounded (🩸):** Taking gunshot damage reduces health to 2/3 HP or 1/3 HP, changing status to Wounded (🩸).
+* **Eliminated (💀):** Reaching 0 HP eliminates the player from the game, dropping any held treasure at their current cell.
+* **Stunned (🕳):** Falling into a pit stuns the player, forcing them to skip their next turn.
+* **Escaped (🏆):** Carrying the treasure to the exit cell wins the game and updates status to Escaped (🏆).
+
+### Inventory & Resources
+* **Bullets (🔫):** 3 maximum. Used to fire ranged gunshots up to 3 cells in a cardinal direction.
+* **Grenades (💣):** 3 maximum. Used to demolish internal wall segments, creating new tactical paths. Outer boundary walls are indestructible.
+
+### Map Landmarks & Entities
+* **Entrance (🚪):** The starting point where players enter the labyrinth grid.
+* **Exit (🏁):** The target destination required to escape after retrieving the treasure.
+* **Treasure (💎):** The primary objective cell. Must be collected and carried to the Exit (🏁) to win.
+* **Hospital (🏥):** Stepping onto this sanctuary cell fully restores health to Healthy status (🤠, 3/3 HP).
+* **Arsenal (⚔️):** Stepping onto this armory cell fully reloads Bullets (🔫 3/3) and Grenades (💣 3/3).
+* **Pit (🕳):** A dangerous pit trap that stuns explorers for 1 turn upon entry.
+* **Teleporter (🌀):** Paired portal cells that instantly warp players across the maze.
+* **Minotaur (👹):** Optional roaming monster that stalks the nearest explorer after each round of player turns.
 
 ---
 
-## 🛠 Setup & Installation
+## Turn Actions & Spatial Auditory Feedback
+
+On their turn, a player may execute one of the following actions:
+
+1. **Move (🚶):** Step North, South, West, or East. Attempting to walk into a wall results in a bumped wall notification and ends the turn without position change.
+2. **Shoot (🎯):** Fire a gunshot in a target direction up to 3 cells in a straight line (`E` hotkey). Hits damage rival players or Minotaur, wall impacts stop the bullet, and missed shots travel full range (💨).
+3. **Grenade (💣):** Throw an explosive grenade (`G` hotkey) at an adjacent wall segment to demolish it (🧱).
+4. **Pass:** Skip the current turn (`Spacebar`).
+
+### Sensory Sound Propagation
+Actions generate spatial sound echoes that notify nearby players within a 3-cell radius in their GM log:
+* **Footsteps:** *“Footsteps heard from South”*
+* **Gunshots:** *“A gunshot echoed from North”*
+* **Explosions:** *“Massive Explosion! Wall Demolished from West”*
+
+---
+
+## The Minotaur & AI Computer Bots
+
+### The Roaming Minotaur (👹)
+* **Configuration:** Can be enabled or disabled during game creation.
+* **Movement:** Moves 1 cell closer to the nearest player at the conclusion of each full round of player turns.
+* **Stink Perception (🦨):** When an explorer comes within a 2-cell radius of the Minotaur, a sensory warning banner is displayed: `🦨 SENSORY WARNING: You smelled the Minotaur's foul stink wafting nearby!`.
+* **Elimination:** If the Minotaur enters a cell occupied by a player, that explorer is immediately eliminated (💀) and drops any held treasure.
+
+### AI Computer Bots (🤖)
+* **Autonomous Decision Engine (`Labyrinth.Game.BotAI`):** Bots navigate under fog-of-war constraints using Breadth-First Search (BFS).
+* **Behavior Priority:**
+  1. If carrying the treasure (💎), compute the shortest BFS path to the Exit (🏁) using known wall memory.
+  2. If an opponent or Minotaur is visible in a straight line-of-sight within range, fire bullets (🔫).
+  3. Otherwise, explore unvisited adjacent cells.
+
+---
+
+## Interactive Post-It Notes & Bot Snapshot Overlay
+
+### Post-It Note Drafting
+Players can create draggable, color-coded Post-It notes on their interface to draft notes, mark suspected wall locations, and keep track of relative movements.
+
+### Bot Fragment Tracking & Pinning (📌)
+* **Relative Coordinate Sub-Grids:** AI bots track their movements, wall impacts, and discovered features on a personal relative coordinate system originating at `(0, 0)`. Each bot is assigned a distinct theme color.
+* **Snapshot Pinning (📌):** Players can click **Pin Active Fragment** on a bot's Post-It card and select a cell `{X, Y}` on the main map to anchor its explored fragment.
+* **Fragment Reset:** Pinning locks a static map snapshot overlay onto the main map board (projecting badges like `📌1 🕳`, `📌2 🌀`, `💎💀`) and resets the bot's live tracking to a fresh relative fragment starting at `(0, 0)`.
+
+---
+
+## Prolog Logic & Map Solvability Engine
+
+Maze reachability and structural validity are verified using Prolog logic rules located in `priv/prolog/labyrinth_validator.pl` via `Labyrinth.Prolog.Validator`.
+
+### Solvability Rules & Constraints
+* Valid path exists from Entrance (🚪) to Treasure (💎).
+* Valid path exists from Entrance (🚪) to Hospital (🏥).
+* Valid path exists from Entrance (🚪) to Arsenal (⚔️).
+* Valid path exists from Treasure (💎) to Exit (🏁).
+* Valid path exists directly from Entrance (🚪) to Exit (🏁).
+* Non-blocked cells must maintain continuous graph connectivity with a minimum reachability ratio of 85% (`>= 0.85`), preventing isolated dead zones.
+
+### Execution Strategy
+1. **Primary Runtime:** Robert Virding's `:erlog` OTP Erlang interpreter evaluates Prolog facts dynamically.
+2. **Secondary Engine:** Internal graph adjacency BFS verification validates reachability ratios.
+3. **CLI Fallback:** SWI-Prolog (`swipl`) system CLI execution is invoked if available.
+
+---
+
+## Turn Replay & History System
+
+Every action, move, bullet shot, explosion, and sound echo is persisted to PostgreSQL in the `turns` database table.
+
+Navigating to `/history/:id` for any past or active game unlocks the replay interface:
+* **Step Slider:** Scrub forward and backward through turn progression step by step.
+* **Auto Play:** Automated playback of all turn events.
+* **Dual View:** Side-by-side display of historical player log feeds alongside full GM Master Map state progression.
+
+---
+
+## Keyboard Controls & Hotkeys
+
+| Key | Action |
+| :--- | :--- |
+| **`W`** / **`Up Arrow`** | Move / Target **North** |
+| **`S`** / **`Down Arrow`** | Move / Target **South** |
+| **`A`** / **`Left Arrow`** | Move / Target **West** |
+| **`D`** / **`Right Arrow`** | Move / Target **East** |
+| **`E`** | Toggle **Shoot** Mode (🎯 Fire Pistol) |
+| **`G`** | Toggle **Grenade** Mode (💣 Demolish Wall) |
+| **`Spacebar`** | **Pass** Turn |
+
+---
+
+## Setup & Installation
 
 ### Prerequisites
-* Elixir ~> 1.17 & Erlang/OTP 26+
-* PostgreSQL running locally (default database user `postgres`)
-* SWI-Prolog (`swipl`) installed (optional fallback)
+* **Elixir:** `~> 1.17`
+* **Erlang/OTP:** `26+`
+* **PostgreSQL:** Running locally (default user: `postgres`)
+* **SWI-Prolog (`swipl`):** (Optional fallback engine)
 
-### Commands
+### Setup Steps
 
-1. **Install dependencies:**
+1. **Clone repository & fetch Elixir dependencies:**
    ```bash
    mix deps.get
    ```
 
-2. **Set up database:**
+2. **Setup and migrate database:**
    ```bash
    mix ecto.create
    mix ecto.migrate
    ```
 
-3. **Build assets:**
+3. **Build asset bundles:**
    ```bash
    mix assets.build
    ```
 
-4. **Start Phoenix dev server:**
+4. **Start Phoenix server:**
    ```bash
    mix phx.server
    ```
 
-5. Open **[http://localhost:4000](http://localhost:4000)** in your browser!
+5. Access the application in your browser at **[http://localhost:4000](http://localhost:4000)**.
 
 ---
 
-## 🎮 Keyboard Controls & Hotkeys
+## Testing & Quality Assurance
 
-| Key | Action |
-| :--- | :--- |
-| **`W`** / **`Up Arrow`** | Action **North** ▲ |
-| **`S`** / **`Down Arrow`** | Action **South** ▼ |
-| **`A`** / **`Left Arrow`** | Action **West** ◄ |
-| **`D`** / **`Right Arrow`** | Action **East** ► |
-| **`E`** | Toggle **Shoot** Mode 🎯 (Fire Pistol) |
-| **`G`** | Toggle **Grenade** Mode 💣 (Demolish Wall) |
-| **`Spacebar`** | **Pass** Turn |
+Run the test suite and project verification using the mix aliases:
 
----
+* **Execute precommit suite:**
+  ```bash
+  mix precommit
+  ```
 
-## 🧪 Running Tests & Precommit
-
-To run tests and code verification:
-```bash
-mix precommit
-```
-or run test suite directly:
-```bash
-mix test
-```
+* **Run ExUnit test suite directly:**
+  ```bash
+  mix test
+  ```
