@@ -58,7 +58,7 @@ defmodule Labyrinth.GameServer do
 
     # Check if existing game in DB or create new
     engine =
-      case Games.get_game(game_id) do
+      case Games.get_db_game(game_id) do
         nil ->
           name = Keyword.get(opts, :name, "Labyrinth Game")
           width = Keyword.get(opts, :width, 10)
@@ -71,6 +71,7 @@ defmodule Labyrinth.GameServer do
 
           e =
             Engine.new_game(name,
+              id: game_id,
               width: width,
               height: height,
               pit_count: pit_count,

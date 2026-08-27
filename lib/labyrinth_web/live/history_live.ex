@@ -163,7 +163,6 @@ defmodule LabyrinthWeb.HistoryLive do
               </div>
 
               <% walls = parse_walls_from_map(@game.map_data["walls"] || []) %>
-              <% entrance = map_to_tuple(@game.map_data["entrance"]) %>
               <% exit_cell = map_to_tuple(@game.map_data["exit"]) %>
               <% treasure = map_to_tuple(@game.map_data["treasure"]) %>
               <% minotaur = map_to_tuple(@game.map_data["minotaur"]) %>
@@ -210,8 +209,6 @@ defmodule LabyrinthWeb.HistoryLive do
                           <span class="text-base font-bold animate-bounce">👤</span>
                         <% cell_pos == minotaur -> %>
                           <span class="text-lg">👹</span>
-                        <% cell_pos == entrance -> %>
-                          <span class="text-xs font-bold text-emerald-400">🚪</span>
                         <% cell_pos == exit_cell -> %>
                           <span class="text-xs font-bold text-purple-400">🏁</span>
                         <% cell_pos == treasure -> %>

@@ -52,21 +52,24 @@ defmodule Labyrinth.Games do
     {games, has_more}
   end
 
+  def get_db_game(id) do
+    try do
+      Repo.get(Game, id)
+    rescue
+      _ -> nil
+    end
+  end
+
   def get_game(id) do
-    db_game =
-      try do
-        Repo.get(Game, id)
-      rescue
-        _ -> nil
-      end
+    db_game = get_db_game(id)
 
     if db_game do
       db_game
     else
       case Registry.lookup(Labyrinth.GameRegistry, id) do
-        [{_pid, _}] ->
+        [{pid, _}] when pid != self() ->
           case Labyrinth.GameServer.get_state(id) do
-            {:ok, engine} ->
+            %Labyrinth.Game.Engine{} = engine ->
               %{
                 id: engine.id,
                 name: engine.name,

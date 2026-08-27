@@ -466,7 +466,6 @@ defmodule LabyrinthWeb.GameLive do
 
   defp cell_feature_icon(cell_pos, engine) do
     cond do
-      cell_pos == engine.entrance -> "🚪"
       cell_pos == engine.exit -> "🏁"
       cell_pos == engine.treasure and not Enum.any?(engine.players, & &1.has_treasure) -> "💎"
       cell_pos == Map.get(engine, :hospital) -> "🏥"
@@ -971,8 +970,6 @@ defmodule LabyrinthWeb.GameLive do
                                 {if feature_icon, do: "#{feature_icon}💀🤠", else: "💀🤠"}
                               <% end %>
                             </span>
-                          <% cell_pos == @engine.entrance -> %>
-                            <span class="text-xs font-bold text-emerald-400">🚪</span>
                           <% cell_pos == @engine.exit -> %>
                             <span class="text-xs font-bold text-purple-400">🏁</span>
                           <% cell_pos == @engine.treasure and not Enum.any?(@engine.players, & &1.has_treasure) -> %>

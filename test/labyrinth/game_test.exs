@@ -1,5 +1,5 @@
 defmodule Labyrinth.GameTest do
-  use Labyrinth.DataCase, async: true
+  use Labyrinth.DataCase, async: false
 
   alias Labyrinth.Game.{Engine, Generator}
   alias Labyrinth.Prolog.Validator
@@ -121,6 +121,62 @@ defmodule Labyrinth.GameTest do
       assert post_it.title == "Draft Note 1"
       saved_notes = Games.list_post_its(game_id, "p1")
       assert length(saved_notes) == 1
+    end
+  end
+
+  describe "GameSupervisor and GameServer Process Lifecycle" do
+    test "starts a new game server without calling_self errors" do
+      game_id = Ecto.UUID.generate()
+
+      assert {:ok, pid} =
+               Labyrinth.GameSupervisor.start_game(
+                 game_id: game_id,
+                 name: "Supervisor Test Game",
+                 width: 8,
+                 height: 8,
+                 bot_count: 1
+               )
+
+      assert Process.alive?(pid)
+
+      state = Labyrinth.GameServer.get_state(game_id)
+      assert state.id == game_id
+      assert state.name == "Supervisor Test Game"
+    end
+
+    test "game transitions to finished status when a player exits with the treasure" do
+      game = Engine.new_game("Escape Test", width: 6, height: 6)
+      game = Engine.add_player(game, "p1", "Hero Explorer")
+      game = Engine.start_game(game)
+
+      # Give player treasure and move into exit cell
+      {exit_x, exit_y} = game.exit
+      p1 = Enum.find(game.players, &(&1.id == "p1"))
+
+      # Pick neighbor cell and direction into exit
+      {start_x, start_y, dir} =
+        cond do
+          exit_x > 0 -> {exit_x - 1, exit_y, :east}
+          exit_y > 0 -> {exit_x, exit_y - 1, :south}
+          true -> {exit_x + 1, exit_y, :west}
+        end
+
+      # Clear any wall between start and exit
+      cleared_walls =
+        Enum.reject(game.walls, fn {p1_w, p2_w} ->
+          (p1_w == {start_x, start_y} and p2_w == {exit_x, exit_y}) or
+            (p2_w == {start_x, start_y} and p1_w == {exit_x, exit_y})
+        end)
+        |> MapSet.new()
+
+      updated_p1 = %{p1 | x: start_x, y: start_y, has_treasure: true}
+      game_ready = %{game | players: [updated_p1], walls: cleared_walls}
+
+      {finished_game, summary} = Engine.process_turn(game_ready, "p1", {:move, dir})
+
+      assert finished_game.status == :finished
+      assert finished_game.winner_name == "Hero Explorer"
+      assert summary.result == "escaped"
     end
   end
 end

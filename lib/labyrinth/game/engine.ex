@@ -40,9 +40,10 @@ defmodule Labyrinth.Game.Engine do
   def new_game(name, opts \\ []) do
     {:ok, map_data} = Generator.generate_map(opts)
     minotaur_enabled? = Keyword.get(opts, :minotaur_enabled, true)
+    id = Keyword.get(opts, :id, Ecto.UUID.generate())
 
     %__MODULE__{
-      id: Ecto.UUID.generate(),
+      id: id,
       name: name,
       width: map_data.width,
       height: map_data.height,
@@ -85,7 +86,7 @@ defmodule Labyrinth.Game.Engine do
         has_treasure: false,
         # :active, :stunned, :eliminated, :escaped
         status: :active,
-        visited_cells: MapSet.new([game.entrance]),
+        visited_cells: MapSet.new(),
         known_walls: MapSet.new(),
         rel_x: 0,
         rel_y: 0,
@@ -144,7 +145,7 @@ defmodule Labyrinth.Game.Engine do
             p
             | x: elem(start_cell, 0),
               y: elem(start_cell, 1),
-              visited_cells: MapSet.put(p.visited_cells, start_cell)
+              visited_cells: MapSet.new([start_cell])
           }
 
           {acc_p ++ [updated_p], rest_starts}
@@ -567,12 +568,14 @@ defmodule Labyrinth.Game.Engine do
          updated_player}
 
       # 6. Exit cell with treasure
-      target_pos == game.exit and base_player.has_treasure ->
+      (target_pos == game.exit or {player.x, player.y} == game.exit) and
+          (base_player.has_treasure or target_pos == game.treasure) ->
         updated_rel_feats = Map.put(rel_feats, {rx, ry}, "exit")
 
         updated_player = %{
           base_player
-          | status: :escaped,
+          | has_treasure: true,
+            status: :escaped,
             discovered_rel_features: updated_rel_feats
         }
 
