@@ -125,10 +125,20 @@ defmodule LabyrinthWeb.GameLive do
 
       case GameServer.take_turn(socket.assigns.game_id, socket.assigns.player_id, action) do
         {:ok, engine, _summary} ->
-          {:noreply,
-           socket
-           |> assign(:engine, engine)
-           |> assign(:action_mode, :move)}
+          sfx =
+            case action do
+              {:shoot, _} -> "gunshot"
+              {:grenade, _} -> "explosion"
+              {:move, _} -> "footstep"
+            end
+
+          socket =
+            socket
+            |> assign(:engine, engine)
+            |> assign(:action_mode, :move)
+            |> push_event("play_sfx", %{sound: sfx})
+
+          {:noreply, socket}
 
         {:error, :not_your_turn} ->
           {:noreply, put_flash(socket, :error, "It is not your turn yet! Please wait.")}
@@ -530,7 +540,12 @@ defmodule LabyrinthWeb.GameLive do
   def render(assigns) do
     ~H"""
     <Layouts.app flash={@flash}>
-      <div phx-window-keydown="handle_keydown" class="max-w-7xl mx-auto space-y-6">
+      <div
+        id="game-audio-container"
+        phx-hook="AudioHook"
+        phx-window-keydown="handle_keydown"
+        class="max-w-7xl mx-auto space-y-6"
+      >
         <%!-- Header Bar --%>
         <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 shadow-lg flex flex-wrap items-center justify-between gap-4">
           <div class="space-y-1">
@@ -886,6 +901,11 @@ defmodule LabyrinthWeb.GameLive do
                       MapSet.member?(destroyed_wall_source, normalize_wall(cell_pos, {x + 1, y})) %>
                     <% has_debris? = n_destroyed or s_destroyed or w_destroyed or e_destroyed %>
 
+                    <% sight_r = Map.get(me || %{}, :sight_radius, 1) %>
+                    <% is_in_sight =
+                      me != nil and (abs(me.x - x) <= sight_r and abs(me.y - y) <= sight_r) %>
+                    <% is_memory_fog = is_visited and not is_in_sight and not reveal_full_map? %>
+
                     <div
                       phx-click={if @pinning_bot_id != nil, do: "cell_click", else: nil}
                       phx-value-x={x}
@@ -897,10 +917,16 @@ defmodule LabyrinthWeb.GameLive do
                             "cursor-pointer hover:ring-2 hover:ring-amber-400 bg-amber-500/20 animate-pulse",
                           else: ""
                         ),
-                        if(is_visited,
-                          do: "bg-slate-900 border-slate-800",
-                          else: "bg-slate-950/80 border-slate-900/50 opacity-40"
-                        ),
+                        cond do
+                          is_in_sight or reveal_full_map? ->
+                            "bg-amber-950/40 border-amber-600/40 text-amber-100 font-bold shadow-inner"
+
+                          is_memory_fog ->
+                            "bg-zinc-900/90 border-zinc-700/60 opacity-60 text-zinc-400 font-normal"
+
+                          true ->
+                            "bg-slate-950/90 border-slate-900/60 opacity-30 text-slate-700"
+                        end,
                         if(is_me_here and me.status in [:active, :wounded, :stunned],
                           do: "bg-amber-500/10"
                         ),
