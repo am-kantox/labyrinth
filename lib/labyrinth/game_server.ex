@@ -68,6 +68,7 @@ defmodule Labyrinth.GameServer do
           teleport_count = Keyword.get(opts, :teleport_count, 5)
           wall_density = Keyword.get(opts, :wall_density, 70)
           minotaur_enabled = Keyword.get(opts, :minotaur_enabled, true)
+          difficulty = Keyword.get(opts, :difficulty, :normal)
 
           e =
             Engine.new_game(name,
@@ -77,7 +78,8 @@ defmodule Labyrinth.GameServer do
               pit_count: pit_count,
               teleport_count: teleport_count,
               wall_density: wall_density,
-              minotaur_enabled: minotaur_enabled
+              minotaur_enabled: minotaur_enabled,
+              difficulty: difficulty
             )
 
           # Save game record in DB
@@ -94,7 +96,8 @@ defmodule Labyrinth.GameServer do
                 pit_count: pit_count,
                 teleport_count: teleport_count,
                 wall_density: wall_density,
-                minotaur_enabled: minotaur_enabled
+                minotaur_enabled: minotaur_enabled,
+                difficulty: Atom.to_string(difficulty)
               }
             })
 

@@ -199,7 +199,8 @@ defmodule Labyrinth.GameTest do
 
       ready_game = %{
         started_game
-        | players: [%{p1 | x: 0, y: 0, status: :active, has_treasure: false}]
+        | minotaur: nil,
+          players: [%{p1 | x: 0, y: 0, status: :active, has_treasure: false}]
       }
 
       {updated_game, summary} = Engine.process_turn(ready_game, "p1", {:move, :east})

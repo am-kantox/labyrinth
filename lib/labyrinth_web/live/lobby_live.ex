@@ -86,6 +86,7 @@ defmodule LabyrinthWeb.LobbyLive do
     teleport_count = String.to_integer(params["teleport_count"] || "1")
     wall_density = String.to_integer(params["wall_density"] || "70")
     minotaur_enabled = Map.get(params, "minotaur_enabled", "true") in ["true", true]
+    difficulty = String.to_atom(params["difficulty"] || "normal")
 
     game_id = Ecto.UUID.generate()
 
@@ -98,7 +99,8 @@ defmodule LabyrinthWeb.LobbyLive do
            pit_count: pit_count,
            teleport_count: teleport_count,
            wall_density: wall_density,
-           minotaur_enabled: minotaur_enabled
+           minotaur_enabled: minotaur_enabled,
+           difficulty: difficulty
          ) do
       {:ok, _pid} ->
         Phoenix.PubSub.broadcast(Labyrinth.PubSub, "lobby", :game_created)
@@ -128,6 +130,7 @@ defmodule LabyrinthWeb.LobbyLive do
     to_form(
       %{
         "name" => "Labyrinth Expedition #{System.unique_integer([:positive])}",
+        "difficulty" => "normal",
         "width" => "10",
         "height" => "10",
         "bot_count" => "2",
@@ -185,6 +188,20 @@ defmodule LabyrinthWeb.LobbyLive do
                 <.input
                   field={@form[:name]}
                   type="text"
+                  class="w-full bg-slate-950 border-slate-700 text-white rounded-lg px-3 py-2 text-sm focus:border-amber-400 focus:ring-amber-400"
+                />
+              </div>
+
+              <div>
+                <label class="block text-xs font-medium text-slate-300 mb-1">Game Level / Difficulty</label>
+                <.input
+                  field={@form[:difficulty]}
+                  type="select"
+                  options={[
+                    {"🟢 Easy (3 HP, 4 Bullets/Grenades, Starting Rope)", "easy"},
+                    {"🟡 Normal (3 HP, 3 Bullets/Grenades, Standard)", "normal"},
+                    {"🔴 Hard (2 HP, 2 Bullets/Grenades, Sprinting Minotaur)", "hard"}
+                  ]}
                   class="w-full bg-slate-950 border-slate-700 text-white rounded-lg px-3 py-2 text-sm focus:border-amber-400 focus:ring-amber-400"
                 />
               </div>
