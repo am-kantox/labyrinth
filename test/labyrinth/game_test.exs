@@ -225,6 +225,26 @@ defmodule Labyrinth.GameTest do
         refute MapSet.member?(forbidden, {p.x, p.y})
       end
     end
+
+    test "minotaur attack wounds player (-1 HP) instead of instant kill" do
+      game = Engine.new_game("Minotaur Wound Test", width: 6, height: 6)
+      game = Engine.add_player(game, "p1", "Survivor")
+      p1 = List.first(game.players)
+
+      ready = %{
+        game
+        | status: :in_progress,
+          minotaur: {1, 0},
+          walls: MapSet.new(),
+          players: [%{p1 | x: 0, y: 0, health: 3, status: :active}]
+      }
+
+      {updated_game, summary} = Engine.process_turn(ready, "p1", :pass)
+      assert String.contains?(summary.message, "Minotaur attacked Survivor")
+      survivor = List.first(updated_game.players)
+      assert survivor.health == 2
+      assert survivor.status == :wounded
+    end
   end
 
   describe "Games Database Persistence Context" do

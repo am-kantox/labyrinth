@@ -511,7 +511,8 @@ defmodule Labyrinth.Game.Engine do
     rel_visited = MapSet.put(Map.get(player, :visited_rel_cells, MapSet.new()), {rx, ry})
     rel_feats = Map.get(player, :discovered_rel_features, %{})
 
-    treasure_grabbed? = target_pos == game.treasure and not player.has_treasure
+    treasure_grabbed? =
+      parse_point(target_pos) == parse_point(game.treasure) and not player.has_treasure
 
     base_player = %{
       player
@@ -560,7 +561,8 @@ defmodule Labyrinth.Game.Engine do
         teleport_visited = MapSet.put(visited, destination)
         updated_rel_feats = Map.put(rel_feats, {rx, ry}, "teleport")
 
-        dest_grabbed? = destination == game.treasure and not base_player.has_treasure
+        dest_grabbed? =
+          parse_point(destination) == parse_point(game.treasure) and not base_player.has_treasure
 
         updated_player = %{
           base_player
@@ -818,27 +820,30 @@ defmodule Labyrinth.Game.Engine do
 
         victims =
           Enum.filter(game_updated.players, fn p ->
-            {p.x, p.y} == final_mpos and p.status in [:active, :stunned]
+            {p.x, p.y} == final_mpos and p.status in [:active, :wounded, :stunned]
           end)
 
-        {game_after_kills, kill_msgs} =
+        {game_after_hits, hit_msgs} =
           Enum.reduce(victims, {game_updated, []}, fn victim, {g_acc, msg_acc} ->
-            updated_v = %{victim | status: :eliminated, has_treasure: false}
-            g_updated = update_player_in_game(g_acc, updated_v)
+            g_updated = apply_shot_damage(g_acc, victim.id)
+            v_after = Enum.find(g_updated.players, fn p -> p.id == victim.id end)
 
-            g_final =
-              if victim.has_treasure, do: %{g_updated | treasure: final_mpos}, else: g_updated
+            msg =
+              if v_after && v_after.status == :eliminated do
+                "👹 Minotaur mauled and ELIMINATED #{victim.name}!"
+              else
+                "👹 Minotaur attacked #{victim.name}! (-1 HP, Wounded)"
+              end
 
-            msg = "👹 Minotaur moved to #{inspect(final_mpos)} and ELIMINATED #{victim.name}!"
-            {g_final, [msg | msg_acc]}
+            {g_updated, [msg | msg_acc]}
           end)
 
         msg_str =
-          if kill_msgs != [],
-            do: Enum.join(kill_msgs, " "),
+          if hit_msgs != [],
+            do: Enum.join(hit_msgs, " "),
             else: "👹 Minotaur stepped in the shadows."
 
-        {game_after_kills, msg_str}
+        {game_after_hits, msg_str}
     end
   end
 
