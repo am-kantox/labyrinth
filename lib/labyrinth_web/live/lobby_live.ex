@@ -152,7 +152,12 @@ defmodule LabyrinthWeb.LobbyLive do
         <div class="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 rounded-2xl p-8 border border-indigo-900/40 shadow-2xl relative overflow-hidden">
           <div class="relative z-10 max-w-2xl">
             <h1 class="text-4xl font-extrabold text-amber-400 tracking-tight flex items-center gap-3">
-              <span>🏰</span> LABYRINTH
+              <img
+                src={~p"/images/logo-128.png"}
+                alt="Labyrinth Logo"
+                class="w-12 h-12 rounded-xl shadow-lg border border-amber-500/30"
+              />
+              <span>LABYRINTH</span>
             </h1>
             <p class="mt-3 text-slate-300 text-base leading-relaxed">
               Step into the unseen maze! Explore blindly guided only by sensory cues, map walls on your personal interactive post-it hints, locate the hidden treasure 💎, and escape before the Minotaur 👹 catches you.

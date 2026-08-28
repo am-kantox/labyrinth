@@ -39,9 +39,13 @@ defmodule LabyrinthWeb.Layouts do
       <div class="flex items-center gap-3">
         <a
           href="/"
-          class="flex items-center gap-2 text-xl font-bold tracking-wider text-amber-400 hover:text-amber-300 transition-colors"
+          class="flex items-center gap-2.5 text-xl font-bold tracking-wider text-amber-400 hover:text-amber-300 transition-colors group"
         >
-          <span class="text-2xl">🏰</span>
+          <img
+            src={~p"/images/logo-64.png"}
+            alt="Labyrinth Logo"
+            class="w-8 h-8 rounded-lg shadow-md group-hover:scale-105 transition-transform"
+          />
           <span>LABYRINTH</span>
         </a>
         <span class="text-xs font-medium px-2 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700">Tactical Exploration</span>
