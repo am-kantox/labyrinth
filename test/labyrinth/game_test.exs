@@ -150,6 +150,56 @@ defmodule Labyrinth.GameTest do
 
       assert Generator.entities_disjoint?(map_data) == true
     end
+
+    test "player grabs treasure when stepping into a pit containing treasure" do
+      game = Engine.new_game("Pit Treasure Test", width: 6, height: 6)
+      clean_walls = MapSet.delete(game.walls, MapUtils.normalize_wall({0, 0}, {1, 0}))
+
+      game = %{
+        game
+        | entrance: {0, 0},
+          treasure: {1, 0},
+          pits: [{1, 0}],
+          teleporters: [],
+          walls: clean_walls
+      }
+
+      game = Engine.add_player(game, "p1", "Looter")
+      started_game = Engine.start_game(game)
+      p1 = List.first(started_game.players)
+      ready_game = %{started_game | players: [%{p1 | x: 0, y: 0, has_treasure: false}]}
+
+      {updated_game, summary} = Engine.process_turn(ready_game, "p1", {:move, :east})
+      assert summary.result == "pit"
+      assert String.contains?(summary.message, "GRABBED THE TREASURE")
+      looter_after = List.first(updated_game.players)
+      assert looter_after.has_treasure == true
+    end
+
+    test "player grabs treasure when stepping on a teleporter landing on treasure" do
+      game = Engine.new_game("Teleport Treasure Test", width: 6, height: 6)
+      clean_walls = MapSet.delete(game.walls, MapUtils.normalize_wall({0, 0}, {1, 0}))
+
+      game = %{
+        game
+        | entrance: {0, 0},
+          treasure: {4, 4},
+          pits: [],
+          teleporters: [{{1, 0}, {4, 4}}],
+          walls: clean_walls
+      }
+
+      game = Engine.add_player(game, "p1", "WarpLooter")
+      started_game = Engine.start_game(game)
+      p1 = List.first(started_game.players)
+      ready_game = %{started_game | players: [%{p1 | x: 0, y: 0, has_treasure: false}]}
+
+      {updated_game, summary} = Engine.process_turn(ready_game, "p1", {:move, :east})
+      assert summary.result == "teleport"
+      looter_after = List.first(updated_game.players)
+      assert looter_after.x == 4 and looter_after.y == 4
+      assert looter_after.has_treasure == true
+    end
   end
 
   describe "Games Database Persistence Context" do

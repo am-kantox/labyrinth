@@ -484,6 +484,8 @@ defmodule Labyrinth.Game.Engine do
     rel_visited = MapSet.put(Map.get(player, :visited_rel_cells, MapSet.new()), {rx, ry})
     rel_feats = Map.get(player, :discovered_rel_features, %{})
 
+    treasure_grabbed? = target_pos == game.treasure and not player.has_treasure
+
     base_player = %{
       player
       | x: elem(target_pos, 0),
@@ -491,14 +493,16 @@ defmodule Labyrinth.Game.Engine do
         visited_cells: visited,
         rel_x: rx,
         rel_y: ry,
-        visited_rel_cells: rel_visited
+        visited_rel_cells: rel_visited,
+        has_treasure: player.has_treasure or treasure_grabbed?
     }
+
+    t_prefix = if treasure_grabbed?, do: "💎 #{player.name} GRABBED THE TREASURE! ", else: ""
 
     cond do
       # 1. Pit / Trap
       has_pit?(game.pits, target_pos) ->
         updated_rel_feats = Map.put(rel_feats, {rx, ry}, "pit")
-
         player_items = Map.get(base_player, :items, MapSet.new())
 
         if MapSet.member?(player_items, :rope) do
@@ -510,9 +514,8 @@ defmodule Labyrinth.Game.Engine do
               discovered_rel_features: updated_rel_feats
           }
 
-          {target_pos, "pit_escaped",
-           "🪢 #{player.name} fell into a Pit but used a Rope to climb out safely!",
-           updated_player}
+          msg = "#{t_prefix}🪢 #{player.name} fell into a Pit but used a Rope to climb out safely!"
+          {target_pos, "pit_escaped", msg, updated_player}
         else
           updated_player = %{
             base_player
@@ -520,8 +523,8 @@ defmodule Labyrinth.Game.Engine do
               discovered_rel_features: updated_rel_feats
           }
 
-          {target_pos, "pit", "#{player.name} fell into a Pit trap! (Loses next turn)",
-           updated_player}
+          msg = "#{t_prefix}#{player.name} fell into a Pit trap! (Loses next turn)"
+          {target_pos, "pit", msg, updated_player}
         end
 
       # 2. Teleporter portal
@@ -530,16 +533,23 @@ defmodule Labyrinth.Game.Engine do
         teleport_visited = MapSet.put(visited, destination)
         updated_rel_feats = Map.put(rel_feats, {rx, ry}, "teleport")
 
+        dest_grabbed? = destination == game.treasure and not base_player.has_treasure
+
         updated_player = %{
           base_player
           | x: elem(destination, 0),
             y: elem(destination, 1),
             visited_cells: teleport_visited,
-            discovered_rel_features: updated_rel_feats
+            discovered_rel_features: updated_rel_feats,
+            has_treasure: base_player.has_treasure or dest_grabbed?
         }
 
-        {destination, "teleport", "#{player.name} stepped on a Teleporter and was warped!",
-         updated_player}
+        warp_prefix = if dest_grabbed?, do: "💎 GRABBED TREASURE AT WARP DESTINATION! ", else: ""
+
+        msg =
+          "#{t_prefix}#{warp_prefix}#{player.name} stepped on a Teleporter and was warped to #{inspect(destination)}!"
+
+        {destination, "teleport", msg, updated_player}
 
       # 3. Hospital Cell
       target_pos == game.hospital ->
@@ -561,7 +571,7 @@ defmodule Labyrinth.Game.Engine do
             {p_with_feat, "🏥 #{player.name} visited the Hospital (already at full 3 HP)."}
           end
 
-        {target_pos, "hospital", msg, updated_player}
+        {target_pos, "hospital", t_prefix <> msg, updated_player}
 
       # 4. Arsenal Cell: Restock Ammunition to 3 bullets & 3 grenades
       target_pos == game.arsenal ->
@@ -585,34 +595,27 @@ defmodule Labyrinth.Game.Engine do
              "⚔️ #{player.name} visited the Arsenal (already fully loaded with 3 bullets & 3 grenades)."}
           end
 
-        {target_pos, "arsenal", msg, updated_player}
+        {target_pos, "arsenal", t_prefix <> msg, updated_player}
 
-      # 5. Treasure cell
-      target_pos == game.treasure and not player.has_treasure ->
-        updated_rel_feats = Map.put(rel_feats, {rx, ry}, "treasure")
-
-        updated_player = %{
-          base_player
-          | has_treasure: true,
-            discovered_rel_features: updated_rel_feats
-        }
-
-        {target_pos, "treasure", "💎 #{player.name} FOUND THE TREASURE! Now escape to the Exit!",
-         updated_player}
-
-      # 6. Exit cell with treasure
-      (target_pos == game.exit or {player.x, player.y} == game.exit) and
-          (base_player.has_treasure or target_pos == game.treasure) ->
+      # 5. Exit cell (carrying treasure)
+      target_pos == game.exit and base_player.has_treasure ->
         updated_rel_feats = Map.put(rel_feats, {rx, ry}, "exit")
 
         updated_player = %{
           base_player
-          | has_treasure: true,
-            status: :escaped,
+          | status: :escaped,
             discovered_rel_features: updated_rel_feats
         }
 
         {target_pos, "escaped", "🏆 #{player.name} ESCAPED THE LABYRINTH WITH THE TREASURE!",
+         updated_player}
+
+      # 6. Clear cell / Treasure pickup
+      treasure_grabbed? ->
+        updated_rel_feats = Map.put(rel_feats, {rx, ry}, "treasure")
+        updated_player = %{base_player | discovered_rel_features: updated_rel_feats}
+
+        {target_pos, "treasure", "💎 #{player.name} FOUND THE TREASURE! Now escape to the Exit!",
          updated_player}
 
       # 7. Regular clear cell
