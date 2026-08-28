@@ -147,6 +147,24 @@ Navigating to `/history/:id` for any past or active game unlocks the replay inte
 
 ---
 
+---
+
+## 🚀 Game Improvements & Feature Upgrades
+
+* **🎮 Scalable Difficulty Modes (`Easy`, `Normal`, `Hard`):** Scaled grid sizing, Minotaur counts, starting HP, and resource loads.
+* **🪢 Tactical Items (`Torch`, `Shotgun`, `Rope`):** 
+  * **Torch:** Expands active line-of-sight radius to 2 cells.
+  * **Shotgun:** Fires 3-cell cone blasts.
+  * **Rope:** Automatically consumed upon stepping into a Pit to climb out without losing a turn.
+* **👹 Minotaur Sprint & Ambush:** Minotaur accelerates to 2 cells/round when unseen for >3 turns.
+* **🤖 Smart Bot AI Memory:** Bots remember Hospital and Arsenal landmark positions, returning to heal or reload when low on resources.
+* **🔊 Web Audio API Sound Synthesizer:** Zero-dependency, zero-latency client-side sound effects for footsteps, gunshots, explosions, and Minotaur roars using Web Audio API JS hook (`push_event`).
+* **🌫️ Memory Fog Rendering:** Visually differentiates active line-of-sight cells from previously visited "memory fog" cells.
+* **💬 Real-Time In-Game Chat & GM Event Injection:** Embedded live player chat channels and GM event dashboard.
+* **⚡ OTP & BFS Performance:** Optimized $O(N^2)$ BFS queue operations to $O(V+E)$ with Erlang `:queue` and unified spatial utilities (`Labyrinth.MapUtils`).
+
+---
+
 ## Setup & Installation
 
 ### Prerequisites

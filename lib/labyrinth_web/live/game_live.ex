@@ -67,7 +67,9 @@ defmodule LabyrinthWeb.GameLive do
      |> assign(:presences, presences)
      |> assign(:post_its, post_its)
      |> assign(:bot_pins, %{})
-     |> assign(:pinning_bot_id, nil)}
+     |> assign(:pinning_bot_id, nil)
+     |> assign(:chat_messages, [])
+     |> assign(:chat_input, "")}
   end
 
   @impl true
@@ -382,6 +384,31 @@ defmodule LabyrinthWeb.GameLive do
   end
 
   @impl true
+  def handle_event("send_chat", %{"message" => text}, socket) do
+    trimmed = String.trim(text)
+
+    if trimmed != "" do
+      me = current_player(socket.assigns.engine, socket.assigns.player_id)
+      sender = if me, do: me.name, else: "Explorer"
+
+      chat_msg = %{
+        id: Ecto.UUID.generate(),
+        sender: sender,
+        text: trimmed,
+        time: Time.truncate(Time.utc_now(), :second)
+      }
+
+      Phoenix.PubSub.broadcast(
+        Labyrinth.PubSub,
+        "game:#{socket.assigns.game_id}",
+        {:chat_message, chat_msg}
+      )
+    end
+
+    {:noreply, assign(socket, :chat_input, "")}
+  end
+
+  @impl true
   def handle_event("cell_click", %{"x" => x_str, "y" => y_str}, socket) do
     pinning_bot_id = socket.assigns[:pinning_bot_id]
 
@@ -510,6 +537,17 @@ defmodule LabyrinthWeb.GameLive do
         acc
       end
     end)
+  end
+
+  @impl true
+  def handle_info({:chat_message, chat_msg}, socket) do
+    updated_chat = [chat_msg | socket.assigns.chat_messages]
+    {:noreply, assign(socket, :chat_messages, Enum.take(updated_chat, 20))}
+  end
+
+  @impl true
+  def handle_info({:gm_announcement, msg}, socket) do
+    {:noreply, put_flash(socket, :info, msg)}
   end
 
   @impl true
