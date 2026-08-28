@@ -624,6 +624,10 @@ defmodule LabyrinthWeb.GameLive do
               <span>•</span>
               <%= if active_turn_player(@engine) do %>
                 <span class="text-amber-300 font-semibold">Current Turn: {active_turn_player(@engine).name}</span>
+                <%= if @engine.status == :in_progress and not active_turn_player(@engine).is_bot do %>
+                  <span>•</span>
+                  <span class="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 text-xs font-mono font-bold animate-pulse">⏱️ 30s Turn Limit</span>
+                <% end %>
               <% end %>
             </p>
           </div>

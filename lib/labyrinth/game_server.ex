@@ -169,6 +169,7 @@ defmodule Labyrinth.GameServer do
 
     {final_engine, _last_bot_summary} = TurnFSM.process_bot_sequence(updated_engine)
 
+    reset_and_schedule_timer(final_engine)
     broadcast_state(final_engine)
     {:reply, {:ok, final_engine}, final_engine}
   end
@@ -179,6 +180,7 @@ defmodule Labyrinth.GameServer do
       idx = Enum.find_index(engine.players, fn p -> p.id == player_id end)
       updated_engine = if idx != nil, do: %{engine | turn_index: idx}, else: engine
       {final_engine, _} = TurnFSM.process_bot_sequence(updated_engine)
+      reset_and_schedule_timer(final_engine)
       broadcast_state(final_engine)
       {:reply, {:ok, final_engine}, final_engine}
     else
@@ -209,6 +211,7 @@ defmodule Labyrinth.GameServer do
 
         if updated_engine.status == :finished do
           Games.update_game_status(updated_engine.id, :finished, updated_engine.winner_name)
+          reset_and_schedule_timer(updated_engine)
           broadcast_state(updated_engine)
           {:reply, {:ok, updated_engine, summary}, updated_engine}
         else
@@ -216,6 +219,7 @@ defmodule Labyrinth.GameServer do
           {final_engine, last_bot_summary} = TurnFSM.process_bot_sequence(updated_engine)
           effective_summary = last_bot_summary || summary
 
+          reset_and_schedule_timer(final_engine)
           broadcast_state(final_engine)
           {:reply, {:ok, final_engine, effective_summary}, final_engine}
         end
@@ -230,6 +234,72 @@ defmodule Labyrinth.GameServer do
     engine_updated = Engine.reset_bot_rel_tracking(engine, bot_id)
     broadcast_state(engine_updated)
     {:reply, {:ok, engine_updated}, engine_updated}
+  end
+
+  @impl true
+  def handle_info({:turn_timeout, player_id, turn_idx, round_num}, engine) do
+    curr = Engine.current_player(engine)
+
+    if ((engine.status == :in_progress and curr) && curr.id == player_id) and
+         engine.turn_index == turn_idx and engine.round_number == round_num do
+      pass_msg = "⏱️ 30s turn timer expired! Auto-passed turn for #{curr.name}."
+      game_with_log = %{engine | log_entries: [pass_msg | engine.log_entries]}
+
+      case Engine.process_turn(game_with_log, player_id, :pass) do
+        {%Engine{} = updated_engine, summary} ->
+          Games.record_turn(%{
+            game_id: updated_engine.id,
+            turn_number: length(Games.list_turns_for_game(updated_engine.id)) + 1,
+            player_id: player_id,
+            player_name: summary.player_name,
+            action_type: summary.action_type,
+            direction: summary.direction,
+            result: summary.result,
+            sound_effects: summary.sound_effects,
+            position_before: %{
+              "x" => elem(summary.pos_before, 0),
+              "y" => elem(summary.pos_before, 1)
+            },
+            position_after: %{
+              "x" => elem(summary.pos_after, 0),
+              "y" => elem(summary.pos_after, 1)
+            }
+          })
+
+          {final_engine, _} = TurnFSM.process_bot_sequence(updated_engine)
+          reset_and_schedule_timer(final_engine)
+          broadcast_state(final_engine)
+
+          {:noreply, final_engine}
+
+        _ ->
+          {:noreply, engine}
+      end
+    else
+      {:noreply, engine}
+    end
+  end
+
+  defp reset_and_schedule_timer(engine) do
+    case Process.get(:turn_timer_ref) do
+      nil -> :ok
+      ref -> Process.cancel_timer(ref)
+    end
+
+    if engine.status == :in_progress do
+      curr = Engine.current_player(engine)
+
+      if curr && not curr.is_bot && curr.status in [:active, :wounded, :stunned] do
+        ref =
+          Process.send_after(
+            self(),
+            {:turn_timeout, curr.id, engine.turn_index, engine.round_number},
+            30_000
+          )
+
+        Process.put(:turn_timer_ref, ref)
+      end
+    end
   end
 
   defp player_in_game?(engine, player_id) do

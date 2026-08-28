@@ -245,6 +245,28 @@ defmodule Labyrinth.GameTest do
       assert survivor.health == 2
       assert survivor.status == :wounded
     end
+
+    test "GameServer auto-passes turn when 30s turn timeout is received" do
+      game_id = Ecto.UUID.generate()
+
+      {:ok, _pid} =
+        Labyrinth.GameServer.start_link(game_id: game_id, name: "Timer Test", bot_count: 0)
+
+      {:ok, _engine} = Labyrinth.GameServer.add_player(game_id, "p1", "LazyPlayer", false)
+      {:ok, started} = Labyrinth.GameServer.start_game(game_id)
+      assert started.status == :in_progress
+
+      p1 = List.first(started.players)
+      via = Labyrinth.GameServer.via_tuple(game_id)
+      server_pid = GenServer.whereis(via)
+      send(server_pid, {:turn_timeout, p1.id, started.turn_index, started.round_number})
+
+      updated = Labyrinth.GameServer.get_state(game_id)
+
+      assert Enum.any?(updated.log_entries, fn entry ->
+               String.contains?(entry, "Auto-passed turn for LazyPlayer")
+             end)
+    end
   end
 
   describe "Games Database Persistence Context" do
