@@ -55,4 +55,6 @@ npm-debug.log
 /priv/static/favicon-*.ico
 /priv/static/favicon-*.svg
 /priv/static/robots-*.txt
-/priv/static/images/logo-*.svg
+/priv/static/site-*.webmanifest
+/priv/static/images/*-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*
+
