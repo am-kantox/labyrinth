@@ -167,7 +167,11 @@ defmodule Labyrinth.GameTest do
       game = Engine.add_player(game, "p1", "Looter")
       started_game = Engine.start_game(game)
       p1 = List.first(started_game.players)
-      ready_game = %{started_game | players: [%{p1 | x: 0, y: 0, has_treasure: false}]}
+
+      ready_game = %{
+        started_game
+        | players: [%{p1 | x: 0, y: 0, status: :active, has_treasure: false}]
+      }
 
       {updated_game, summary} = Engine.process_turn(ready_game, "p1", {:move, :east})
       assert summary.result == "pit"
@@ -192,13 +196,34 @@ defmodule Labyrinth.GameTest do
       game = Engine.add_player(game, "p1", "WarpLooter")
       started_game = Engine.start_game(game)
       p1 = List.first(started_game.players)
-      ready_game = %{started_game | players: [%{p1 | x: 0, y: 0, has_treasure: false}]}
+
+      ready_game = %{
+        started_game
+        | players: [%{p1 | x: 0, y: 0, status: :active, has_treasure: false}]
+      }
 
       {updated_game, summary} = Engine.process_turn(ready_game, "p1", {:move, :east})
       assert summary.result == "teleport"
       looter_after = List.first(updated_game.players)
       assert looter_after.x == 4 and looter_after.y == 4
       assert looter_after.has_treasure == true
+    end
+
+    test "start_game never places any player on teleporters or pits" do
+      game = Engine.new_game("Start Position Test", width: 6, height: 6)
+      pits = [{1, 1}, {2, 2}]
+      teleporters = [{{0, 0}, {3, 3}}, {{4, 4}, {5, 5}}]
+      game = %{game | pits: pits, teleporters: teleporters}
+
+      game = Engine.add_player(game, "p1", "Player 1")
+      game = Engine.add_player(game, "p2", "Player 2")
+      started = Engine.start_game(game)
+
+      forbidden = MapSet.new([{1, 1}, {2, 2}, {0, 0}, {3, 3}, {4, 4}, {5, 5}])
+
+      for p <- started.players do
+        refute MapSet.member?(forbidden, {p.x, p.y})
+      end
     end
   end
 

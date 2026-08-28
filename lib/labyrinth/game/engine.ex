@@ -137,14 +137,41 @@ defmodule Labyrinth.Game.Engine do
 
   def start_game(%__MODULE__{status: :lobby} = game) do
     if length(game.players) >= 1 do
-      # Gather all valid non-trap, non-exit, non-treasure cells for randomized spawn
+      teleport_cells =
+        (game.teleporters || [])
+        |> Enum.flat_map(fn
+          {p1, p2} -> [parse_point(p1), parse_point(p2)]
+          [p1, p2] -> [parse_point(p1), parse_point(p2)]
+          %{"p1" => p1, "p2" => p2} -> [parse_point(p1), parse_point(p2)]
+          _ -> []
+        end)
+        |> MapSet.new()
+
+      pit_cells =
+        (game.pits || [])
+        |> Enum.map(&parse_point/1)
+        |> MapSet.new()
+
+      forbidden_cells =
+        [
+          teleport_cells,
+          pit_cells,
+          MapSet.new(
+            [
+              parse_point(game.exit),
+              parse_point(game.treasure),
+              parse_point(game.minotaur)
+            ]
+            |> Enum.reject(&is_nil/1)
+          )
+        ]
+        |> Enum.reduce(MapSet.new(), &MapSet.union/2)
+
       valid_start_cells =
         for x <- 0..(game.width - 1),
             y <- 0..(game.height - 1),
             pos = {x, y},
-            pos not in game.pits,
-            pos != game.exit,
-            pos != game.treasure,
+            not MapSet.member?(forbidden_cells, pos),
             do: pos
 
       shuffled_starts = Enum.shuffle(valid_start_cells)
@@ -154,7 +181,7 @@ defmodule Labyrinth.Game.Engine do
           {start_cell, rest_starts} =
             case remaining_starts do
               [s | rest] -> {s, rest}
-              [] -> {game.entrance, []}
+              [] -> {List.first(shuffled_starts) || game.entrance, []}
             end
 
           updated_p = %{
