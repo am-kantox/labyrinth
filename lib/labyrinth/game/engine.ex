@@ -78,11 +78,11 @@ defmodule Labyrinth.Game.Engine do
     else
       diff = Map.get(game.settings || %{}, "difficulty", :normal)
 
-      {start_hp, bullets, grenades} =
+      {start_hp, bullets, grenades, start_items} =
         case diff do
-          :easy -> {3, 4, 4}
-          :hard -> {2, 2, 2}
-          _ -> {3, 3, 3}
+          :easy -> {3, 4, 4, MapSet.new([:rope])}
+          :hard -> {2, 2, 2, MapSet.new()}
+          _ -> {3, 3, 3, MapSet.new()}
         end
 
       player = %{
@@ -98,7 +98,7 @@ defmodule Labyrinth.Game.Engine do
         grenades: grenades,
         max_grenades: grenades,
         has_treasure: false,
-        items: MapSet.new(),
+        items: start_items,
         sight_radius: 1,
         # :active, :stunned, :eliminated, :escaped
         status: :active,
@@ -600,26 +600,32 @@ defmodule Labyrinth.Game.Engine do
 
         {target_pos, "hospital", t_prefix <> msg, updated_player}
 
-      # 4. Arsenal Cell: Restock Ammunition to 3 bullets & 3 grenades
+      # 4. Arsenal Cell: Restock Ammunition to 3 bullets & 3 grenades + Rope
       target_pos == game.arsenal ->
         updated_rel_feats = Map.put(rel_feats, {rx, ry}, "arsenal")
+        curr_items = Map.get(base_player, :items, MapSet.new())
+        has_rope? = MapSet.member?(curr_items, :rope)
+        new_items = MapSet.put(curr_items, :rope)
 
         {updated_player, msg} =
-          if base_player.bullets < 3 or Map.get(base_player, :grenades, 3) < 3 do
+          if base_player.bullets < 3 or Map.get(base_player, :grenades, 3) < 3 or not has_rope? do
             p_reloaded = %{
               base_player
               | bullets: 3,
                 grenades: 3,
+                items: new_items,
                 discovered_rel_features: updated_rel_feats
             }
 
+            rope_msg = if not has_rope?, do: " and picked up a Rope 🪢!", else: "!"
+
             {p_reloaded,
-             "⚔️ #{player.name} visited the Arsenal! Bullets (3/3) & Grenades (3/3) fully reloaded 💣🔫!"}
+             "⚔️ #{player.name} visited the Arsenal! Ammunition fully reloaded (3/3 💣🔫)#{rope_msg}"}
           else
             p_with_feat = %{base_player | discovered_rel_features: updated_rel_feats}
 
             {p_with_feat,
-             "⚔️ #{player.name} visited the Arsenal (already fully loaded with 3 bullets & 3 grenades)."}
+             "⚔️ #{player.name} visited the Arsenal (already fully loaded with ammo & Rope 🪢)."}
           end
 
         {target_pos, "arsenal", t_prefix <> msg, updated_player}

@@ -769,6 +769,22 @@ defmodule LabyrinthWeb.GameLive do
                     <span class="font-bold text-white">{if my_p.has_treasure, do: "YES 🏆", else: "NO"}</span>
                   </div>
                   <div class="flex items-center gap-1.5">
+                    <span class="text-sky-400">🎒 Inventory:</span>
+                    <span class="font-bold text-sky-200">
+                      <%= if MapSet.size(Map.get(my_p, :items, MapSet.new())) > 0 do %>
+                        {Enum.map(my_p.items, fn
+                          :rope -> "🪢 Rope"
+                          :torch -> "🔦 Torch"
+                          :shotgun -> "🔫 Shotgun"
+                          item -> Atom.to_string(item)
+                        end)
+                        |> Enum.join(", ")}
+                      <% else %>
+                        Empty
+                      <% end %>
+                    </span>
+                  </div>
+                  <div class="flex items-center gap-1.5">
                     <span class="text-slate-400">Status:</span>
                     <span class={[
                       "font-bold text-xs px-2 py-0.5 rounded capitalize",
