@@ -4,6 +4,7 @@ defmodule Labyrinth.GameTest do
   alias Labyrinth.Game.{Engine, Generator}
   alias Labyrinth.Prolog.Validator
   alias Labyrinth.Games
+  alias Labyrinth.MapUtils
 
   describe "Prolog Maze Validation & Generation" do
     test "generates valid solvable map and satisfies Prolog reachability rules" do
@@ -57,6 +58,7 @@ defmodule Labyrinth.GameTest do
                "moved",
                "wall",
                "pit",
+               "pit_escaped",
                "teleport",
                "hospital",
                "arsenal",
@@ -65,6 +67,49 @@ defmodule Labyrinth.GameTest do
              ]
 
       assert %Engine{} = updated_game
+    end
+
+    test "supports difficulty levels (easy, hard)" do
+      game_easy = Engine.new_game("Easy", difficulty: :easy)
+      game_easy = Engine.add_player(game_easy, "p1", "Easy Player")
+      p_easy = List.first(game_easy.players)
+      assert p_easy.health == 3
+      assert p_easy.bullets == 4
+
+      game_hard = Engine.new_game("Hard", difficulty: :hard)
+      game_hard = Engine.add_player(game_hard, "p2", "Hard Player")
+      p_hard = List.first(game_hard.players)
+      assert p_hard.health == 2
+      assert p_hard.bullets == 2
+    end
+
+    test "rope item prevents pit stun" do
+      game = Engine.new_game("Rope Test", width: 6, height: 6)
+      clean_walls = MapSet.delete(game.walls, MapUtils.normalize_wall({0, 0}, {1, 0}))
+
+      game = %{
+        game
+        | entrance: {0, 0},
+          hospital: {5, 5},
+          arsenal: {5, 5},
+          treasure: {5, 5},
+          exit: {5, 5},
+          pits: [{1, 0}],
+          teleporters: [],
+          walls: clean_walls
+      }
+
+      game = Engine.add_player(game, "p1", "Climber")
+      started_game = Engine.start_game(game)
+      p1 = List.first(started_game.players)
+      p1_with_rope = %{p1 | x: 0, y: 0, items: MapSet.new([:rope])}
+      ready_game = %{started_game | players: [p1_with_rope]}
+
+      {updated_game, summary} = Engine.process_turn(ready_game, "p1", {:move, :east})
+      assert summary.result == "pit_escaped"
+      player_after = List.first(updated_game.players)
+      assert player_after.status == :active
+      assert not MapSet.member?(player_after.items, :rope)
     end
   end
 

@@ -66,7 +66,8 @@ defmodule Labyrinth.Game.Engine do
       last_action_result: nil,
       log_entries: ["Game created. Waiting for players to join."],
       settings: %{
-        "minotaur_enabled" => minotaur_enabled?
+        "minotaur_enabled" => minotaur_enabled?,
+        "difficulty" => Keyword.get(opts, :difficulty, :normal)
       }
     }
   end
@@ -75,16 +76,30 @@ defmodule Labyrinth.Game.Engine do
     if Enum.any?(game.players, fn p -> p.id == player_id end) do
       game
     else
+      diff = Map.get(game.settings || %{}, "difficulty", :normal)
+
+      {start_hp, bullets, grenades} =
+        case diff do
+          :easy -> {3, 4, 4}
+          :hard -> {2, 2, 2}
+          _ -> {3, 3, 3}
+        end
+
       player = %{
         id: player_id,
         name: name,
         is_bot: is_bot,
         x: elem(game.entrance, 0),
         y: elem(game.entrance, 1),
-        health: 3,
-        bullets: 3,
-        grenades: 3,
+        health: start_hp,
+        max_hp: start_hp,
+        bullets: bullets,
+        max_bullets: bullets,
+        grenades: grenades,
+        max_grenades: grenades,
         has_treasure: false,
+        items: MapSet.new(),
+        sight_radius: 1,
         # :active, :stunned, :eliminated, :escaped
         status: :active,
         visited_cells: MapSet.new(),
@@ -483,14 +498,30 @@ defmodule Labyrinth.Game.Engine do
       has_pit?(game.pits, target_pos) ->
         updated_rel_feats = Map.put(rel_feats, {rx, ry}, "pit")
 
-        updated_player = %{
-          base_player
-          | status: :stunned,
-            discovered_rel_features: updated_rel_feats
-        }
+        player_items = Map.get(base_player, :items, MapSet.new())
 
-        {target_pos, "pit", "#{player.name} fell into a Pit trap! (Loses next turn)",
-         updated_player}
+        if MapSet.member?(player_items, :rope) do
+          updated_items = MapSet.delete(player_items, :rope)
+
+          updated_player = %{
+            base_player
+            | items: updated_items,
+              discovered_rel_features: updated_rel_feats
+          }
+
+          {target_pos, "pit_escaped",
+           "🪢 #{player.name} fell into a Pit but used a Rope to climb out safely!",
+           updated_player}
+        else
+          updated_player = %{
+            base_player
+            | status: :stunned,
+              discovered_rel_features: updated_rel_feats
+          }
+
+          {target_pos, "pit", "#{player.name} fell into a Pit trap! (Loses next turn)",
+           updated_player}
+        end
 
       # 2. Teleporter portal
       has_teleport?(game.teleporters, target_pos) ->
@@ -717,22 +748,40 @@ defmodule Labyrinth.Game.Engine do
 
         {mx, my} = game.minotaur
         nearest_player = Enum.min_by(active_players, fn p -> abs(p.x - mx) + abs(p.y - my) end)
+        dist = abs(nearest_player.x - mx) + abs(nearest_player.y - my)
 
-        dx = signum(nearest_player.x - mx)
-        dy = signum(nearest_player.y - my)
+        unseen_count = Map.get(game.settings || %{}, "minotaur_unseen", 0)
+        unseen_count = if dist > 3, do: unseen_count + 1, else: 0
+        sprint? = unseen_count >= 3
 
-        target_step =
-          cond do
-            dx != 0 and not has_wall?(game.walls, {mx, my}, {mx + dx, my}) -> {mx + dx, my}
-            dy != 0 and not has_wall?(game.walls, {mx, my}, {mx, my + dy}) -> {mx, my + dy}
-            true -> {mx, my}
-          end
+        steps_to_take = if sprint?, do: 2, else: 1
 
-        game_updated = %{game | minotaur: target_step}
+        {final_mpos, _} =
+          Enum.reduce(1..steps_to_take, {{mx, my}, game}, fn _, {{cur_mx, cur_my}, g_acc} ->
+            dx = signum(nearest_player.x - cur_mx)
+            dy = signum(nearest_player.y - cur_my)
+
+            next_pos =
+              cond do
+                dx != 0 and not has_wall?(g_acc.walls, {cur_mx, cur_my}, {cur_mx + dx, cur_my}) ->
+                  {cur_mx + dx, cur_my}
+
+                dy != 0 and not has_wall?(g_acc.walls, {cur_mx, cur_my}, {cur_mx, cur_my + dy}) ->
+                  {cur_mx, cur_my + dy}
+
+                true ->
+                  {cur_mx, cur_my}
+              end
+
+            {next_pos, g_acc}
+          end)
+
+        updated_settings = Map.put(game.settings || %{}, "minotaur_unseen", unseen_count)
+        game_updated = %{game | minotaur: final_mpos, settings: updated_settings}
 
         victims =
           Enum.filter(game_updated.players, fn p ->
-            {p.x, p.y} == target_step and p.status in [:active, :stunned]
+            {p.x, p.y} == final_mpos and p.status in [:active, :stunned]
           end)
 
         {game_after_kills, kill_msgs} =
@@ -741,9 +790,9 @@ defmodule Labyrinth.Game.Engine do
             g_updated = update_player_in_game(g_acc, updated_v)
 
             g_final =
-              if victim.has_treasure, do: %{g_updated | treasure: target_step}, else: g_updated
+              if victim.has_treasure, do: %{g_updated | treasure: final_mpos}, else: g_updated
 
-            msg = "👹 Minotaur moved to #{inspect(target_step)} and ELIMINATED #{victim.name}!"
+            msg = "👹 Minotaur moved to #{inspect(final_mpos)} and ELIMINATED #{victim.name}!"
             {g_final, [msg | msg_acc]}
           end)
 

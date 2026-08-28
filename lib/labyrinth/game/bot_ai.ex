@@ -16,6 +16,9 @@ defmodule Labyrinth.Game.BotAI do
 
     shoot_dir = find_opponent_in_line_of_sight(game, bot)
 
+    hospital_known? = MapSet.member?(bot.visited_cells, game.hospital)
+    arsenal_known? = MapSet.member?(bot.visited_cells, game.arsenal)
+
     cond do
       # 1. Carrying treasure -> Navigate towards Exit cell
       bot.has_treasure ->
@@ -26,13 +29,27 @@ defmodule Labyrinth.Game.BotAI do
 
       # 2. Combat opportunity: Shoot if opponent is visible in straight line
       bot.bullets > 0 and shoot_dir != nil ->
-        if :rand.uniform(10) > 3 do
+        if :rand.uniform(10) > 2 do
           {:shoot, shoot_dir}
         else
           {:move, explore_direction(game, bot, pos)}
         end
 
-      # 3. Standard Exploration
+      # 3. Wounded & knows hospital -> Navigate to Hospital to heal
+      bot.health < 3 and hospital_known? and pos != game.hospital ->
+        case find_bfs_direction(pos, game.hospital, game.width, game.height, bot.known_walls) do
+          nil -> {:move, explore_direction(game, bot, pos)}
+          dir -> {:move, dir}
+        end
+
+      # 4. Out of bullets & knows arsenal -> Navigate to Arsenal for ammo reload
+      bot.bullets == 0 and arsenal_known? and pos != game.arsenal ->
+        case find_bfs_direction(pos, game.arsenal, game.width, game.height, bot.known_walls) do
+          nil -> {:move, explore_direction(game, bot, pos)}
+          dir -> {:move, dir}
+        end
+
+      # 5. Standard Exploration
       true ->
         {:move, explore_direction(game, bot, pos)}
     end
