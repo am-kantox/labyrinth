@@ -54,6 +54,13 @@ defmodule LabyrinthWeb.Layouts do
           <.icon name="hero-home" class="w-4 h-4" />
           <span>Lobby</span>
         </.link>
+        <.link
+          navigate={~p"/rules"}
+          class="text-sm font-medium text-slate-300 hover:text-amber-400 transition-colors flex items-center gap-1.5"
+        >
+          <.icon name="hero-book-open" class="w-4 h-4 text-amber-400" />
+          <span>Rules & Guide</span>
+        </.link>
       </nav>
     </header>
 

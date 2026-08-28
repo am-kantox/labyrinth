@@ -27,6 +27,7 @@ defmodule LabyrinthWeb.Router do
     pipe_through :browser
 
     live "/", LobbyLive
+    live "/rules", RulesLive
     live "/games/:id", GameLive
     live "/history/:id", HistoryLive
   end

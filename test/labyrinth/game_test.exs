@@ -103,7 +103,7 @@ defmodule Labyrinth.GameTest do
       started_game = Engine.start_game(game)
       p1 = List.first(started_game.players)
       p1_with_rope = %{p1 | x: 0, y: 0, items: MapSet.new([:rope])}
-      ready_game = %{started_game | players: [p1_with_rope]}
+      ready_game = %{started_game | minotaur: nil, players: [p1_with_rope]}
 
       {updated_game, summary} = Engine.process_turn(ready_game, "p1", {:move, :east})
       assert summary.result == "pit_escaped"
