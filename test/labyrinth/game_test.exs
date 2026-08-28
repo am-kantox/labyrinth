@@ -111,6 +111,21 @@ defmodule Labyrinth.GameTest do
       assert player_after.status == :active
       assert not MapSet.member?(player_after.items, :rope)
     end
+
+    test "TurnFSM.process_bot_sequence returns 2-tuple when all players are eliminated" do
+      game = Engine.new_game("FSM Test", width: 6, height: 6)
+      game = Engine.add_player(game, "bot-1", "Bot 1", true)
+      game = Engine.add_player(game, "bot-2", "Bot 2", true)
+      started = Engine.start_game(game)
+
+      elim_players = Enum.map(started.players, fn p -> %{p | status: :eliminated} end)
+      elim_game = %{started | players: elim_players}
+
+      assert {final_engine, summary} = Labyrinth.Game.TurnFSM.process_bot_sequence(elim_game)
+      assert %Engine{} = final_engine
+      assert final_engine.status == :finished
+      assert summary == nil
+    end
   end
 
   describe "Games Database Persistence Context" do

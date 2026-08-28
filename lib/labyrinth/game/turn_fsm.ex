@@ -51,7 +51,7 @@ defmodule Labyrinth.Game.TurnFSM do
 
   defp do_process_bot_sequence(engine, depth) when depth > 20 do
     # Circuit breaker against infinite loops
-    force_advance_turn(engine)
+    {force_advance_turn(engine), nil}
   end
 
   defp do_process_bot_sequence(%Engine{status: :in_progress} = engine, depth) do
@@ -62,9 +62,22 @@ defmodule Labyrinth.Game.TurnFSM do
         {engine, nil}
 
       curr.status in [:eliminated, :escaped] ->
-        # Automatically skip eliminated or escaped players
-        forced = force_advance_turn(engine)
-        do_process_bot_sequence(forced, depth + 1)
+        active_remaining? =
+          Enum.any?(engine.players, fn p -> p.status in [:active, :wounded, :stunned] end)
+
+        if active_remaining? do
+          forced = force_advance_turn(engine)
+          do_process_bot_sequence(forced, depth + 1)
+        else
+          final_engine =
+            if engine.status == :in_progress do
+              %{engine | status: :finished, winner_name: engine.winner_name || "No Survivors"}
+            else
+              engine
+            end
+
+          {final_engine, nil}
+        end
 
       curr.is_bot and curr.status in [:active, :wounded, :stunned] ->
         action = Labyrinth.Game.BotAI.choose_action(engine, curr)
