@@ -6,12 +6,24 @@ defmodule LabyrinthWeb.GameLive do
   alias Labyrinth.Presence
   alias Labyrinth.Games
 
+  @dirs %{"north" => :north, "south" => :south, "east" => :east, "west" => :west}
+
   @impl true
   def mount(%{"id" => game_id}, session, socket) do
     # Ensure GameServer process is running
     {:ok, _pid} = GameSupervisor.start_game(game_id: game_id)
 
-    player_id = session["player_id"] || Ecto.UUID.generate()
+    # Use the authenticated player identity from the session (set by ensure_player_id plug).
+    # Fall back to a generated ID only if no session identity exists.
+    player_id = session["player_id"]
+
+    player_id =
+      if is_binary(player_id) and player_id != "" do
+        player_id
+      else
+        Ecto.UUID.generate()
+      end
+
     player_name = "Player " <> String.slice(player_id, 0, 4)
 
     # Join game as player
@@ -99,27 +111,31 @@ defmodule LabyrinthWeb.GameLive do
 
   @impl true
   def handle_event("do_action", %{"dir" => dir_str}, socket) do
-    dir = String.to_existing_atom(dir_str)
+    dir = Map.get(@dirs, dir_str)
 
-    action =
-      case socket.assigns.action_mode do
-        :shoot -> {:shoot, dir}
-        :grenade -> {:grenade, dir}
-        _ -> {:move, dir}
+    if dir == nil do
+      {:noreply, put_flash(socket, :error, "Invalid direction: #{inspect(dir_str)}")}
+    else
+      action =
+        case socket.assigns.action_mode do
+          :shoot -> {:shoot, dir}
+          :grenade -> {:grenade, dir}
+          _ -> {:move, dir}
+        end
+
+      case GameServer.take_turn(socket.assigns.game_id, socket.assigns.player_id, action) do
+        {:ok, engine, _summary} ->
+          {:noreply,
+           socket
+           |> assign(:engine, engine)
+           |> assign(:action_mode, :move)}
+
+        {:error, :not_your_turn} ->
+          {:noreply, put_flash(socket, :error, "It is not your turn yet! Please wait.")}
+
+        {:error, reason} ->
+          {:noreply, put_flash(socket, :error, "Action failed: #{inspect(reason)}")}
       end
-
-    case GameServer.take_turn(socket.assigns.game_id, socket.assigns.player_id, action) do
-      {:ok, engine, _summary} ->
-        {:noreply,
-         socket
-         |> assign(:engine, engine)
-         |> assign(:action_mode, :move)}
-
-      {:error, :not_your_turn} ->
-        {:noreply, put_flash(socket, :error, "It is not your turn yet! Please wait.")}
-
-      {:error, reason} ->
-        {:noreply, put_flash(socket, :error, "Action failed: #{inspect(reason)}")}
     end
   end
 

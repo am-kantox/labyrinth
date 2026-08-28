@@ -35,3 +35,13 @@ labyrinth-*.tar
 npm-debug.log
 /assets/node_modules/
 
+/.erl.history/
+/.dsh/
+/.ragex/
+
+# Elixir LS
+/.elixir_ls/
+/.elixir-tools/
+/.expert/
+/.lexical/
+/.tool-versions

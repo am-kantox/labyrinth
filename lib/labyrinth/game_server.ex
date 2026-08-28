@@ -175,11 +175,15 @@ defmodule Labyrinth.GameServer do
 
   @impl true
   def handle_call({:force_turn, player_id}, _from, engine) do
-    idx = Enum.find_index(engine.players, fn p -> p.id == player_id end)
-    updated_engine = if idx != nil, do: %{engine | turn_index: idx}, else: engine
-    {final_engine, _} = TurnFSM.process_bot_sequence(updated_engine)
-    broadcast_state(final_engine)
-    {:reply, {:ok, final_engine}, final_engine}
+    if player_in_game?(engine, player_id) do
+      idx = Enum.find_index(engine.players, fn p -> p.id == player_id end)
+      updated_engine = if idx != nil, do: %{engine | turn_index: idx}, else: engine
+      {final_engine, _} = TurnFSM.process_bot_sequence(updated_engine)
+      broadcast_state(final_engine)
+      {:reply, {:ok, final_engine}, final_engine}
+    else
+      {:reply, {:error, :unknown_player}, engine}
+    end
   end
 
   @impl true
@@ -226,6 +230,10 @@ defmodule Labyrinth.GameServer do
     engine_updated = Engine.reset_bot_rel_tracking(engine, bot_id)
     broadcast_state(engine_updated)
     {:reply, {:ok, engine_updated}, engine_updated}
+  end
+
+  defp player_in_game?(engine, player_id) do
+    Enum.any?(engine.players, fn p -> p.id == player_id end)
   end
 
   defp broadcast_state(engine) do
