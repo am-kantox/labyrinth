@@ -34,6 +34,7 @@ defmodule Labyrinth.Game.Engine do
   ]
 
   alias Labyrinth.Game.Generator
+  alias Labyrinth.MapUtils
 
   @type direction :: :north | :south | :east | :west
 
@@ -239,12 +240,12 @@ defmodule Labyrinth.Game.Engine do
     if wall_blocked? do
       # Bump wall
       updated_known_walls =
-        MapSet.put(player.known_walls, normalize_wall_pair(pos_before, target_pos))
+        MapSet.put(player.known_walls, MapUtils.normalize_wall(pos_before, target_pos))
 
       updated_rel_walls =
         MapSet.put(
           Map.get(player, :known_rel_walls, MapSet.new()),
-          normalize_wall_pair({rx, ry}, {target_rx, target_ry})
+          MapUtils.normalize_wall({rx, ry}, {target_rx, target_ry})
         )
 
       updated_player = %{
@@ -367,7 +368,7 @@ defmodule Labyrinth.Game.Engine do
       {game, summary}
     else
       target_pos = neighbor_in_dir(pos_before, dir)
-      wall_pair = normalize_wall_pair(pos_before, target_pos)
+      wall_pair = MapUtils.normalize_wall(pos_before, target_pos)
 
       # Check if wall is outer perimeter of the whole labyrinth
       outer_boundary? = is_out_of_bounds(target_pos, game.width, game.height)
@@ -879,11 +880,6 @@ defmodule Labyrinth.Game.Engine do
 
   defp is_out_of_bounds({x, y}, w, h), do: x < 0 or x >= w or y < 0 or y >= h
 
-  defp has_wall?(walls, p1, p2) do
-    pair = normalize_wall_pair(p1, p2)
-    MapSet.member?(walls, pair)
-  end
-
   defp parse_point({x, y}), do: {x, y}
   defp parse_point(%{"x" => x, "y" => y}), do: {x, y}
   defp parse_point([x, y]), do: {x, y}
@@ -939,20 +935,13 @@ defmodule Labyrinth.Game.Engine do
     end)
   end
 
-  defp normalize_wall_pair(p1, p2) do
-    if p1 <= p2, do: {p1, p2}, else: {p2, p1}
-  end
-
-  defp parse_walls(walls) when is_list(walls) do
-    walls
-    |> Enum.map(fn
-      %{"x1" => x1, "y1" => y1, "x2" => x2, "y2" => y2} -> normalize_wall_pair({x1, y1}, {x2, y2})
-      {{x1, y1}, {x2, y2}} -> normalize_wall_pair({x1, y1}, {x2, y2})
-    end)
-    |> MapSet.new()
+  defp has_wall?(walls, p1, p2) do
+    pair = MapUtils.normalize_wall(p1, p2)
+    MapSet.member?(walls, pair)
   end
 
   defp parse_walls(walls) when is_struct(walls, MapSet), do: walls
+  defp parse_walls(walls), do: MapUtils.normalize_walls(walls)
 
   defp signum(val) when val > 0, do: 1
   defp signum(val) when val < 0, do: -1

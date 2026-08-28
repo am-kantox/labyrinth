@@ -5,9 +5,11 @@ defmodule Labyrinth.Game.Generator do
   """
 
   alias Labyrinth.Prolog.Validator
+  alias Labyrinth.MapUtils
 
   @doc """
-  Generates a validated maze data structure.
+  Generates a complete maze map with all entities, landmarks, and walls.
+  Ensures path solvability from Entrance to Exit.
   Options:
     - `:width` (default 10)
     - `:height` (default 10)
@@ -120,8 +122,8 @@ defmodule Labyrinth.Game.Generator do
     # Create grid of cells, connect adjacent with full internal walls
     edges =
       for x <- 0..(width - 1), y <- 0..(height - 1), into: [] do
-        e1 = if x + 1 < width, do: [normalize_wall_pair({x, y}, {x + 1, y})], else: []
-        e2 = if y + 1 < height, do: [normalize_wall_pair({x, y}, {x, y + 1})], else: []
+        e1 = if x + 1 < width, do: [MapUtils.normalize_wall({x, y}, {x + 1, y})], else: []
+        e2 = if y + 1 < height, do: [MapUtils.normalize_wall({x, y}, {x, y + 1})], else: []
         e1 ++ e2
       end
       |> List.flatten()
@@ -168,10 +170,6 @@ defmodule Labyrinth.Game.Generator do
     else
       find_root(sets, parent)
     end
-  end
-
-  defp normalize_wall_pair(p1, p2) do
-    if p1 <= p2, do: {p1, p2}, else: {p2, p1}
   end
 
   defp normalize_walls_to_json(walls) do

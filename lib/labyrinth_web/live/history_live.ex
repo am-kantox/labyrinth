@@ -2,6 +2,7 @@ defmodule LabyrinthWeb.HistoryLive do
   use LabyrinthWeb, :live_view
 
   alias Labyrinth.Games
+  alias Labyrinth.MapUtils
 
   @impl true
   def mount(%{"id" => game_id}, _session, socket) do
@@ -184,13 +185,15 @@ defmodule LabyrinthWeb.HistoryLive do
                         current_turn.position_before["x"] == x &&
                         current_turn.position_before["y"] == y %>
 
-                    <% n_wall = MapSet.member?(walls, normalize_wall(cell_pos, {x, y - 1})) or y == 0 %>
+                    <% n_wall =
+                      MapSet.member?(walls, MapUtils.normalize_wall(cell_pos, {x, y - 1})) or y == 0 %>
                     <% s_wall =
-                      MapSet.member?(walls, normalize_wall(cell_pos, {x, y + 1})) or
+                      MapSet.member?(walls, MapUtils.normalize_wall(cell_pos, {x, y + 1})) or
                         y == @game.height - 1 %>
-                    <% w_wall = MapSet.member?(walls, normalize_wall(cell_pos, {x - 1, y})) or x == 0 %>
+                    <% w_wall =
+                      MapSet.member?(walls, MapUtils.normalize_wall(cell_pos, {x - 1, y})) or x == 0 %>
                     <% e_wall =
-                      MapSet.member?(walls, normalize_wall(cell_pos, {x + 1, y})) or
+                      MapSet.member?(walls, MapUtils.normalize_wall(cell_pos, {x + 1, y})) or
                         x == @game.width - 1 %>
 
                     <div class={[
@@ -290,18 +293,13 @@ defmodule LabyrinthWeb.HistoryLive do
     """
   end
 
+  alias Labyrinth.MapUtils
+
   defp parse_walls_from_map(walls_list) do
     walls_list
-    |> Enum.map(fn %{"x1" => x1, "y1" => y1, "x2" => x2, "y2" => y2} ->
-      normalize_wall({x1, y1}, {x2, y2})
-    end)
-    |> MapSet.new()
+    |> MapUtils.normalize_walls()
   end
 
   defp map_to_tuple(%{"x" => x, "y" => y}), do: {x, y}
   defp map_to_tuple(_), do: {0, 0}
-
-  defp normalize_wall(p1, p2) do
-    if p1 <= p2, do: {p1, p2}, else: {p2, p1}
-  end
 end

@@ -10,6 +10,8 @@ defmodule Labyrinth.Prolog.Validator do
   4. Percentage of reachable open cells (guarantees no large isolated dead zones).
   """
 
+  alias Labyrinth.MapUtils
+
   @doc """
   Validates a map structure using `erlog` Erlang Prolog engine.
   Returns `{:ok, details}` or `{:error, reason}`.
@@ -142,7 +144,7 @@ defmodule Labyrinth.Prolog.Validator do
       end
 
     state =
-      Enum.reduce(normalize_walls(walls), state, fn {{x1, y1}, {x2, y2}}, s_acc ->
+      Enum.reduce(MapUtils.normalize_walls(walls), state, fn {{x1, y1}, {x2, y2}}, s_acc ->
         case :erlog.prove({:assertz, {:wall, x1, y1, x2, y2}}, s_acc) do
           {{:succeed, _}, s_new} -> s_new
           _ -> s_acc
@@ -168,7 +170,7 @@ defmodule Labyrinth.Prolog.Validator do
   end
 
   defp build_adjacency_graph(width, height, walls, teleporters) do
-    wall_set = MapSet.new(normalize_walls(walls))
+    wall_set = MapUtils.normalize_walls(walls)
 
     teleport_map =
       Enum.reduce(teleporters, %{}, fn {p1, p2}, acc ->
@@ -181,10 +183,10 @@ defmodule Labyrinth.Prolog.Validator do
       curr = {x, y}
 
       neighbors =
-        [{x + 1, y}, {x - 1, y}, {x, y + 1}, {x, y - 1}]
-        |> Enum.filter(fn {nx, ny} -> nx >= 0 and nx < width and ny >= 0 and ny < height end)
+        MapUtils.neighbors(curr)
+        |> Enum.filter(fn {nx, ny} -> MapUtils.in_bounds?({nx, ny}, width, height) end)
         |> Enum.reject(fn neighbor ->
-          MapSet.member?(wall_set, normalize_wall_pair(curr, neighbor))
+          MapSet.member?(wall_set, MapUtils.normalize_wall(curr, neighbor))
         end)
 
       extra_teleports = Map.get(teleport_map, curr, [])
@@ -194,44 +196,34 @@ defmodule Labyrinth.Prolog.Validator do
     end
   end
 
-  defp normalize_walls(walls) when is_list(walls) do
-    Enum.map(walls, fn
-      {{x1, y1}, {x2, y2}} -> normalize_wall_pair({x1, y1}, {x2, y2})
-      [x1, y1, x2, y2] -> normalize_wall_pair({x1, y1}, {x2, y2})
-      %{"x1" => x1, "y1" => y1, "x2" => x2, "y2" => y2} -> normalize_wall_pair({x1, y1}, {x2, y2})
-    end)
-  end
-
-  defp normalize_walls(walls) when is_map(walls) do
-    walls
-    |> Map.values()
-    |> normalize_walls()
-  end
-
-  defp normalize_wall_pair(p1, p2) do
-    if p1 <= p2, do: {p1, p2}, else: {p2, p1}
-  end
-
   defp find_path(graph, start, target) do
-    bfs([{start, [start]}], MapSet.new([start]), target, graph)
+    queue = :queue.in({start, [start]}, :queue.new())
+    visited = MapSet.new([start])
+    bfs(queue, visited, target, graph)
   end
 
-  defp bfs([], _visited, _target, _graph), do: nil
-  defp bfs([{curr, path} | _tail], _visited, curr, _graph), do: Enum.reverse(path)
+  defp bfs(queue, visited, target, graph) do
+    case :queue.out(queue) do
+      {:empty, _} ->
+        nil
 
-  defp bfs([{curr, path} | tail], visited, target, graph) do
-    neighbors = Map.get(graph, curr, [])
+      {{:value, {^target, path}}, _rest} ->
+        Enum.reverse(path)
 
-    {new_queue, new_visited} =
-      Enum.reduce(neighbors, {tail, visited}, fn nbr, {q_acc, v_acc} ->
-        if MapSet.member?(v_acc, nbr) do
-          {q_acc, v_acc}
-        else
-          {q_acc ++ [{nbr, [nbr | path]}], MapSet.put(v_acc, nbr)}
-        end
-      end)
+      {{:value, {curr, path}}, rest_queue} ->
+        neighbors = Map.get(graph, curr, [])
 
-    bfs(new_queue, new_visited, target, graph)
+        {new_queue, new_visited} =
+          Enum.reduce(neighbors, {rest_queue, visited}, fn nbr, {q_acc, v_acc} ->
+            if MapSet.member?(v_acc, nbr) do
+              {q_acc, v_acc}
+            else
+              {:queue.in({nbr, [nbr | path]}, q_acc), MapSet.put(v_acc, nbr)}
+            end
+          end)
+
+        bfs(new_queue, new_visited, target, graph)
+    end
   end
 
   defp count_reachable_cells(graph, start) do
@@ -287,7 +279,7 @@ defmodule Labyrinth.Prolog.Validator do
 
     if rules_content != nil and System.find_executable("swipl") do
       wall_facts =
-        normalize_walls(walls)
+        MapUtils.normalize_walls(walls)
         |> Enum.map(fn {{x1, y1}, {x2, y2}} -> "assertz(wall(#{x1}, #{y1}, #{x2}, #{y2}))." end)
         |> Enum.join(" ")
 
