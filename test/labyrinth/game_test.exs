@@ -126,6 +126,30 @@ defmodule Labyrinth.GameTest do
       assert final_engine.status == :finished
       assert summary == nil
     end
+
+    test "shooting directly into a wall self-wounds the shooter" do
+      game = Engine.new_game("Shoot Wall Test", width: 6, height: 6)
+      game = Engine.add_player(game, "p1", "Shooter")
+      p1 = List.first(game.players)
+      wall_in_front = MapUtils.normalize_wall({0, 0}, {0, 1})
+      game = %{game | entrance: {0, 0}, walls: MapSet.new([wall_in_front])}
+      started = Engine.start_game(game)
+
+      ready = %{started | players: [%{p1 | x: 0, y: 0, health: 3, bullets: 3}]}
+
+      {updated_game, summary} = Engine.process_turn(ready, "p1", {:shoot, :south})
+      assert summary.result == "shot_ricochet"
+      shooter_after = List.first(updated_game.players)
+      assert shooter_after.health == 2
+      assert shooter_after.status == :wounded
+    end
+
+    test "generated maps guarantee 100% disjoint entity coordinates" do
+      {:ok, map_data} =
+        Generator.generate_map(width: 8, height: 8, pit_count: 3, teleport_count: 2)
+
+      assert Generator.entities_disjoint?(map_data) == true
+    end
   end
 
   describe "Games Database Persistence Context" do

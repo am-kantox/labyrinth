@@ -332,7 +332,8 @@ defmodule Labyrinth.Game.Engine do
       game_updated = update_player_in_game(game, updated_player)
 
       # Projectile raycast up to 3 cells
-      {hit_result, hit_msg, hit_player_id} = trace_shot(game_updated, pos_before, dir, 3)
+      {hit_result, hit_msg, hit_player_id} =
+        trace_shot(game_updated, pos_before, dir, 3, player.id)
 
       game_after_hit =
         case hit_player_id do
@@ -826,7 +827,7 @@ defmodule Labyrinth.Game.Engine do
     end)
   end
 
-  defp trace_shot(game, {sx, sy}, dir, max_range) do
+  defp trace_shot(game, {sx, sy}, dir, max_range, shooter_id) do
     {dx, dy} = dir_delta(dir)
 
     Enum.reduce_while(
@@ -837,7 +838,13 @@ defmodule Labyrinth.Game.Engine do
         nxt = {sx + dx * dist, sy + dy * dist}
 
         if is_out_of_bounds(nxt, game.width, game.height) or has_wall?(game.walls, curr, nxt) do
-          {:halt, {"shot_wall", "Gunshot fired #{dir} hit a stone wall!", nil}}
+          shooter = Enum.find(game.players, fn p -> p.id == shooter_id end)
+          shooter_name = if shooter, do: shooter.name, else: "the shooter"
+
+          {:halt,
+           {"shot_ricochet",
+            "💥 Gunshot fired #{dir} hit a wall and RICOCHETED, self-wounding #{shooter_name}! (-1 HP)",
+            shooter_id}}
         else
           minotaur_hit? = game.minotaur != nil and game.minotaur == nxt
 

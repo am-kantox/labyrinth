@@ -83,23 +83,23 @@ defmodule Labyrinth.Game.Generator do
       walls: normalize_walls_to_json(walls)
     }
 
-    case Validator.validate_map(map_data) do
-      {:ok, validation_info} ->
-        {:ok, Map.put(map_data, :validation_info, validation_info)}
+    if entities_disjoint?(map_data) do
+      case Validator.validate_map(map_data) do
+        {:ok, validation_info} ->
+          {:ok, Map.put(map_data, :validation_info, validation_info)}
 
-      {:error, _reason} ->
-        do_generate(width, height, pit_count, teleport_count, wall_density, attempt + 1)
+        {:error, _reason} ->
+          do_generate(width, height, pit_count, teleport_count, wall_density, attempt + 1)
+      end
+    else
+      do_generate(width, height, pit_count, teleport_count, wall_density, attempt + 1)
     end
   end
 
   defp do_generate(width, height, _pit_count, _teleport_count, _wall_density, _attempt) do
-    # Fallback to simple grid without internal walls if max attempts exceeded
-    entrance = {0, 0}
-    exit_cell = {width - 1, height - 1}
-    treasure = {div(width, 2), div(height, 2)}
-    hospital = {max(0, div(width, 2) - 1), div(height, 2)}
-    arsenal = {max(0, div(width, 2) + 1), div(height, 2)}
-    minotaur = {div(width, 2) + 2, div(height, 2)}
+    # Fallback with guaranteed disjoint entity positions
+    all_cells = for x <- 0..(width - 1), y <- 0..(height - 1), do: {x, y}
+    [entrance, exit_cell, treasure, hospital, arsenal, minotaur | _] = Enum.shuffle(all_cells)
 
     map_data = %{
       width: width,
@@ -117,6 +117,42 @@ defmodule Labyrinth.Game.Generator do
 
     {:ok, Map.put(map_data, :validation_info, %{method: :fallback})}
   end
+
+  @doc """
+  Verifies that no two entities (entrance, exit, treasure, hospital, arsenal, minotaur, pits, teleporters)
+  share the same cell coordinate on the map.
+  """
+  def entities_disjoint?(map_data) do
+    tp_cells =
+      (Map.get(map_data, :teleporters) || [])
+      |> Enum.flat_map(fn
+        {p1, p2} -> [parse_point(p1), parse_point(p2)]
+        [p1, p2] -> [parse_point(p1), parse_point(p2)]
+        _ -> []
+      end)
+
+    pits = Enum.map(Map.get(map_data, :pits) || [], &parse_point/1)
+
+    single_entities =
+      [
+        parse_point(map_data.entrance),
+        parse_point(map_data.exit),
+        parse_point(map_data.treasure),
+        parse_point(map_data.hospital),
+        parse_point(map_data.arsenal),
+        parse_point(map_data.minotaur)
+      ]
+      |> Enum.reject(&is_nil/1)
+
+    all_coords = single_entities ++ pits ++ tp_cells
+
+    length(all_coords) == length(Enum.uniq(all_coords))
+  end
+
+  defp parse_point({x, y}), do: {x, y}
+  defp parse_point(%{"x" => x, "y" => y}), do: {x, y}
+  defp parse_point([x, y]), do: {x, y}
+  defp parse_point(_), do: nil
 
   defp generate_maze_walls(width, height, wall_density) do
     # Create grid of cells, connect adjacent with full internal walls
