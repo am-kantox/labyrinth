@@ -396,7 +396,7 @@ defmodule LabyrinthWeb.LobbyLive do
                   <div class="text-xs text-slate-400 flex items-center gap-3">
                     <span>Grid: {game.width}×{game.height}</span>
                     <span>•</span>
-                    <span>Created {Calendar.strftime(game.inserted_at, "%H:%M:%S")}</span>
+                    <span>Created {Calendar.strftime(game.inserted_at, "%Y-%m-%d %H:%M:%S")}</span>
                     <%= if game.winner_name do %>
                       <span>•</span>
                       <span class="text-amber-300 font-semibold">Winner: {game.winner_name}</span>
