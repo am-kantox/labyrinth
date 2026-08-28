@@ -458,10 +458,12 @@ defmodule LabyrinthWeb.GameLive do
   end
 
   defp bot_color_theme(bot_id_or_name) do
+    str = to_string(bot_id_or_name)
+
     idx =
-      case Regex.run(~r/\d+/, to_string(bot_id_or_name)) do
+      case Regex.run(~r/\d+/, str) do
         [num_str] -> String.to_integer(num_str)
-        _ -> 1
+        _ -> String.to_charlist(str) |> Enum.sum()
       end
 
     case rem(max(0, idx - 1), 5) do
@@ -1250,26 +1252,26 @@ defmodule LabyrinthWeb.GameLive do
 
           <%!-- Right Column: Interactive Bot Post-Its, Telemetry Log & Roster (4 cols) --%>
           <div class="lg:col-span-4 space-y-6">
-            <%!-- Bot Expedition Sub-Grid Post-Its --%>
+            <%!-- Explorer Expedition Sub-Grid Post-Its --%>
             <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-xl space-y-4">
               <div class="flex items-center justify-between border-b border-slate-800 pb-3">
                 <h3 class="text-sm font-bold text-slate-100 flex items-center gap-2">
                   <.icon name="hero-document-duplicate" class="w-4 h-4 text-amber-400" />
-                  Bot Expedition Post-Its
+                  Explorer Expedition Post-Its
                 </h3>
-                <span class="text-[11px] font-mono text-slate-400">Blind relative fragments</span>
+                <span class="text-[11px] font-mono text-slate-400">Relative map fragments</span>
               </div>
 
-              <% bot_players = Enum.filter(@engine.players, & &1.is_bot) %>
+              <% other_explorers = Enum.reject(@engine.players, fn p -> p.id == @player_id end) %>
 
               <div class="space-y-4 max-h-[600px] overflow-y-auto pr-1">
-                <%= if bot_players == [] do %>
+                <%= if other_explorers == [] do %>
                   <div class="p-6 text-center bg-slate-950/60 rounded-lg border border-dashed border-slate-800 text-slate-400 text-xs">
-                    No bots in this expedition. Add bots from the lobby or control panel to trace their blind relative fragments!
+                    No other explorers in this expedition. Add bots or invite human players to trace their relative fragments!
                   </div>
                 <% end %>
 
-                <%= for bot <- bot_players do %>
+                <%= for bot <- other_explorers do %>
                   <% b_theme = bot_color_theme(bot.id) %>
                   <% bot_snaps = Map.get(@bot_pins, bot.id, []) %>
                   <% is_selecting_pin = @pinning_bot_id == bot.id %>
@@ -1283,12 +1285,14 @@ defmodule LabyrinthWeb.GameLive do
                   ]}>
                     <div class="flex items-center justify-between border-b border-slate-950/20 pb-2">
                       <div class="flex items-center gap-2">
-                        <span class="font-bold text-xs uppercase tracking-wide truncate max-w-[150px]">🤖 {bot.name}</span>
+                        <span class="font-bold text-xs uppercase tracking-wide truncate max-w-[150px]">
+                          {if bot.is_bot, do: "🤖", else: "👤"} {bot.name}
+                        </span>
                         <span class={[
                           "px-1.5 py-0.5 text-[9px] font-bold rounded font-mono shadow-sm",
                           b_theme.badge
                         ]}>
-                          BOT #{b_theme.id}
+                          {if bot.is_bot, do: "BOT", else: "PLAYER"}
                         </span>
                       </div>
 

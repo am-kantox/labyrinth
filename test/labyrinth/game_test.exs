@@ -135,7 +135,7 @@ defmodule Labyrinth.GameTest do
       game = %{game | entrance: {0, 0}, walls: MapSet.new([wall_in_front])}
       started = Engine.start_game(game)
 
-      ready = %{started | players: [%{p1 | x: 0, y: 0, health: 3, bullets: 3}]}
+      ready = %{started | minotaur: nil, players: [%{p1 | x: 0, y: 0, health: 3, bullets: 3}]}
 
       {updated_game, summary} = Engine.process_turn(ready, "p1", {:shoot, :south})
       assert summary.result == "shot_ricochet"
