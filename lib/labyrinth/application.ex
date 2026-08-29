@@ -15,6 +15,7 @@ defmodule Labyrinth.Application do
       Labyrinth.Presence,
       {Registry, keys: :unique, name: Labyrinth.GameRegistry},
       {DynamicSupervisor, name: Labyrinth.GameSupervisor, strategy: :one_for_one},
+      {Task.Supervisor, name: Labyrinth.TaskSupervisor},
       LabyrinthWeb.Endpoint
     ]
 

@@ -161,6 +161,7 @@ defmodule Labyrinth.GameTest do
           treasure: {1, 0},
           pits: [{1, 0}],
           teleporters: [],
+          minotaur: nil,
           walls: clean_walls
       }
 

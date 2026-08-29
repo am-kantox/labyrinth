@@ -8,42 +8,36 @@ defmodule LabyrinthWeb.Router do
     plug :put_root_layout, html: {LabyrinthWeb.Layouts, :root}
     plug :protect_from_forgery
     plug :put_secure_browser_headers
-    plug :ensure_player_id
-  end
-
-  defp ensure_player_id(conn, _opts) do
-    if Plug.Conn.get_session(conn, :player_id) do
-      conn
-    else
-      Plug.Conn.put_session(conn, :player_id, Ecto.UUID.generate())
-    end
+    plug LabyrinthWeb.UserAuth, :fetch_current_player
   end
 
   pipeline :api do
     plug :accepts, ["json"]
   end
 
+  scope "/auth", LabyrinthWeb do
+    pipe_through :browser
+
+    get "/:provider", AuthController, :request
+    post "/:provider/callback", AuthController, :callback
+    get "/:provider/callback", AuthController, :callback
+    delete "/logout", AuthController, :delete
+  end
+
   scope "/", LabyrinthWeb do
     pipe_through :browser
 
-    live "/", LobbyLive
-    live "/rules", RulesLive
-    live "/games/:id", GameLive
-    live "/history/:id", HistoryLive
+    live_session :authenticated_player,
+      on_mount: [{LabyrinthWeb.UserAuth, :mount_current_player}] do
+      live "/", LobbyLive
+      live "/rules", RulesLive
+      live "/games/:id", GameLive
+      live "/history/:id", HistoryLive
+    end
   end
-
-  # Other scopes may use custom stacks.
-  # scope "/api", LabyrinthWeb do
-  #   pipe_through :api
-  # end
 
   # Enable LiveDashboard and Swoosh mailbox preview in development
   if Application.compile_env(:labyrinth, :dev_routes) do
-    # If you want to use the LiveDashboard in production, you should put
-    # it behind authentication and allow only admins to access it.
-    # If your application does not have an admins-only section yet,
-    # you can use Plug.BasicAuth to set up some basic authentication
-    # as long as you are also using SSL (which you should anyway).
     import Phoenix.LiveDashboard.Router
 
     scope "/dev" do

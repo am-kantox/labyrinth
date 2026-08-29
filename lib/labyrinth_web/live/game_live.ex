@@ -252,19 +252,30 @@ defmodule LabyrinthWeb.GameLive do
 
   @impl true
   def handle_event("update_post_it_text", %{"id" => id, "text" => text}, socket) do
-    Games.save_post_it(%{
-      "id" => id,
-      "game_id" => socket.assigns.game_id,
-      "player_id" => socket.assigns.player_id,
-      "text" => text
-    })
+    case Games.save_post_it(
+           %{
+             "id" => id,
+             "game_id" => socket.assigns.game_id,
+             "player_id" => socket.assigns.player_id,
+             "text" => text
+           },
+           socket.assigns.player_id
+         ) do
+      {:ok, _saved} ->
+        updated =
+          Enum.map(socket.assigns.post_its, fn p ->
+            if to_string(p.id) == id, do: %{p | text: text}, else: p
+          end)
 
-    updated =
-      Enum.map(socket.assigns.post_its, fn p ->
-        if to_string(p.id) == id, do: %{p | text: text}, else: p
-      end)
+        {:noreply, assign(socket, :post_its, updated)}
 
-    {:noreply, assign(socket, :post_its, updated)}
+      {:error, :unauthorized} ->
+        {:noreply,
+         put_flash(socket, :error, "Unauthorized: You cannot edit another player's note.")}
+
+      _ ->
+        {:noreply, socket}
+    end
   end
 
   @impl true
@@ -285,36 +296,15 @@ defmodule LabyrinthWeb.GameLive do
           Map.put(current_marks, cell_str, symbol)
         end
 
-      {:ok, saved} =
-        Games.save_post_it(%{
-          "id" => id,
-          "game_id" => socket.assigns.game_id,
-          "player_id" => socket.assigns.player_id,
-          "grid_marks" => new_marks
-        })
-
-      updated =
-        Enum.map(socket.assigns.post_its, fn p -> if to_string(p.id) == id, do: saved, else: p end)
-
-      {:noreply, assign(socket, :post_its, updated)}
-    else
-      {:noreply, socket}
-    end
-  end
-
-  @impl true
-  def handle_event("toggle_stick_post_it", %{"id" => id}, socket) do
-    post_it = Enum.find(socket.assigns.post_its, fn p -> to_string(p.id) == id end)
-
-    if post_it do
-      new_stuck = not (post_it.is_stuck || false)
-
-      case Games.save_post_it(%{
-             id: post_it.id,
-             game_id: socket.assigns.game_id,
-             player_id: socket.assigns.player_id,
-             is_stuck: new_stuck
-           }) do
+      case Games.save_post_it(
+             %{
+               "id" => id,
+               "game_id" => socket.assigns.game_id,
+               "player_id" => socket.assigns.player_id,
+               "grid_marks" => new_marks
+             },
+             socket.assigns.player_id
+           ) do
         {:ok, saved} ->
           updated =
             Enum.map(socket.assigns.post_its, fn p ->
@@ -322,6 +312,10 @@ defmodule LabyrinthWeb.GameLive do
             end)
 
           {:noreply, assign(socket, :post_its, updated)}
+
+        {:error, :unauthorized} ->
+          {:noreply,
+           put_flash(socket, :error, "Unauthorized: You cannot mark another player's note.")}
 
         _ ->
           {:noreply, socket}
@@ -332,10 +326,39 @@ defmodule LabyrinthWeb.GameLive do
   end
 
   @impl true
+  def handle_event("toggle_stick_post_it", %{"id" => id}, socket) do
+    case Games.toggle_stick_post_it(id, socket.assigns.player_id) do
+      {:ok, saved} ->
+        updated =
+          Enum.map(socket.assigns.post_its, fn p ->
+            if to_string(p.id) == id, do: saved, else: p
+          end)
+
+        {:noreply, assign(socket, :post_its, updated)}
+
+      {:error, :unauthorized} ->
+        {:noreply,
+         put_flash(socket, :error, "Unauthorized: You cannot pin another player's note.")}
+
+      _ ->
+        {:noreply, socket}
+    end
+  end
+
+  @impl true
   def handle_event("delete_post_it", %{"id" => id}, socket) do
-    Games.delete_post_it(id)
-    updated = Enum.reject(socket.assigns.post_its, fn p -> to_string(p.id) == id end)
-    {:noreply, assign(socket, :post_its, updated)}
+    case Games.delete_post_it(id, socket.assigns.player_id) do
+      {:ok, _} ->
+        updated = Enum.reject(socket.assigns.post_its, fn p -> to_string(p.id) == id end)
+        {:noreply, assign(socket, :post_its, updated)}
+
+      {:error, :unauthorized} ->
+        {:noreply,
+         put_flash(socket, :error, "Unauthorized: You cannot delete another player's note.")}
+
+      _ ->
+        {:noreply, socket}
+    end
   end
 
   @impl true

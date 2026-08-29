@@ -28,8 +28,7 @@ defmodule Labyrinth.Prolog.Validator do
     teleporters = Map.get(map_data, :teleporters, [])
 
     # 1. Primary Prolog Validation via `erlog` (rvirding/erlog)
-    erlog_result =
-      run_erlog_validation(width, height, entrance, treasure, exit_cell, walls, teleporters)
+    erlog_result = run_erlog_validation(map_data)
 
     # 2. Graph Connectivity and Reachability Verification
     graph = build_adjacency_graph(width, height, walls, teleporters)
@@ -53,8 +52,7 @@ defmodule Labyrinth.Prolog.Validator do
         reachability_ratio >= 0.85
 
     # 3. SWI-Prolog CLI fallback verification if available
-    swipl_result =
-      run_swipl_validation(width, height, entrance, treasure, exit_cell, walls, teleporters)
+    swipl_result = run_swipl_validation(map_data)
 
     cond do
       match?({:ok, _}, erlog_result) and embedded_valid? ->
@@ -106,16 +104,17 @@ defmodule Labyrinth.Prolog.Validator do
 
   @doc """
   Runs Prolog validation using Robert Virding's `erlog` Erlang engine.
+  Accepts a single map parameter containing width, height, entrance, treasure, exit, walls, teleporters.
   """
-  def run_erlog_validation(
-        width,
-        height,
-        {ent_x, ent_y},
-        {trs_x, trs_y},
-        {exit_x, exit_y},
-        walls,
-        teleporters
-      ) do
+  def run_erlog_validation(map_data) when is_map(map_data) do
+    width = map_data.width
+    height = map_data.height
+    {ent_x, ent_y} = map_data.entrance
+    {trs_x, trs_y} = map_data.treasure
+    {exit_x, exit_y} = map_data.exit
+    walls = map_data.walls
+    teleporters = Map.get(map_data, :teleporters, [])
+
     {:ok, state} = :erlog.new()
 
     root_path = Path.expand("priv/prolog/labyrinth_validator.pl")
@@ -248,15 +247,19 @@ defmodule Labyrinth.Prolog.Validator do
     count_bfs(tail ++ unvisited, new_visited, graph)
   end
 
-  defp run_swipl_validation(
-         width,
-         height,
-         {ent_x, ent_y},
-         {trs_x, trs_y},
-         {exit_x, exit_y},
-         walls,
-         teleporters
-       ) do
+  @doc """
+  Runs SWI-Prolog CLI validation.
+  Accepts a single map parameter.
+  """
+  def run_swipl_validation(map_data) when is_map(map_data) do
+    width = map_data.width
+    height = map_data.height
+    {ent_x, ent_y} = map_data.entrance
+    {trs_x, trs_y} = map_data.treasure
+    {exit_x, exit_y} = map_data.exit
+    walls = map_data.walls
+    teleporters = Map.get(map_data, :teleporters, [])
+
     root_path = Path.expand("priv/prolog/labyrinth_validator.pl")
 
     priv_path =

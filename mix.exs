@@ -74,7 +74,9 @@ defmodule Labyrinth.MixProject do
       {:dns_cluster, "~> 0.2.0"},
       {:bandit, "~> 1.5"},
       {:erlog, github: "rvirding/erlog"},
-      {:finitomata, "~> 0.16"}
+      {:finitomata, "~> 0.16"},
+      {:ueberauth, "~> 0.10"},
+      {:ueberauth_identity, "~> 0.4"}
     ]
   end
 

@@ -30,7 +30,8 @@ defmodule Labyrinth.Game.Engine do
     :winner_name,
     :last_action_result,
     :log_entries,
-    :settings
+    :settings,
+    :turn_counter
   ]
 
   alias Labyrinth.Game.Generator
@@ -528,135 +529,170 @@ defmodule Labyrinth.Game.Engine do
     t_prefix = if treasure_grabbed?, do: "💎 #{player.name} GRABBED THE TREASURE! ", else: ""
 
     cond do
-      # 1. Pit / Trap
       has_pit?(game.pits, target_pos) ->
-        updated_rel_feats = Map.put(rel_feats, {rx, ry}, "pit")
-        player_items = Map.get(base_player, :items, MapSet.new())
+        resolve_pit_landing(base_player, target_pos, {rx, ry}, rel_feats, t_prefix)
 
-        if MapSet.member?(player_items, :rope) do
-          updated_items = MapSet.delete(player_items, :rope)
-
-          updated_player = %{
-            base_player
-            | items: updated_items,
-              discovered_rel_features: updated_rel_feats
-          }
-
-          msg = "#{t_prefix}🪢 #{player.name} fell into a Pit but used a Rope to climb out safely!"
-          {target_pos, "pit_escaped", msg, updated_player}
-        else
-          updated_player = %{
-            base_player
-            | status: :stunned,
-              discovered_rel_features: updated_rel_feats
-          }
-
-          msg = "#{t_prefix}#{player.name} fell into a Pit trap! (Loses next turn)"
-          {target_pos, "pit", msg, updated_player}
-        end
-
-      # 2. Teleporter portal
       has_teleport?(game.teleporters, target_pos) ->
-        destination = get_teleport_dest(game.teleporters, target_pos)
-        teleport_visited = MapSet.put(visited, destination)
-        updated_rel_feats = Map.put(rel_feats, {rx, ry}, "teleport")
+        resolve_teleport_landing(
+          game,
+          base_player,
+          target_pos,
+          {rx, ry},
+          visited,
+          rel_feats,
+          t_prefix
+        )
 
-        dest_grabbed? =
-          parse_point(destination) == parse_point(game.treasure) and not base_player.has_treasure
-
-        updated_player = %{
-          base_player
-          | x: elem(destination, 0),
-            y: elem(destination, 1),
-            visited_cells: teleport_visited,
-            discovered_rel_features: updated_rel_feats,
-            has_treasure: base_player.has_treasure or dest_grabbed?
-        }
-
-        warp_prefix = if dest_grabbed?, do: "💎 GRABBED TREASURE AT WARP DESTINATION! ", else: ""
-
-        msg =
-          "#{t_prefix}#{warp_prefix}#{player.name} stepped on a Teleporter and was warped to #{inspect(destination)}!"
-
-        {destination, "teleport", msg, updated_player}
-
-      # 3. Hospital Cell
       target_pos == game.hospital ->
-        updated_rel_feats = Map.put(rel_feats, {rx, ry}, "hospital")
+        resolve_hospital_landing(base_player, target_pos, {rx, ry}, rel_feats, t_prefix)
 
-        {updated_player, msg} =
-          if base_player.status == :wounded or base_player.health < 3 do
-            p_healed = %{
-              base_player
-              | health: 3,
-                status: :active,
-                discovered_rel_features: updated_rel_feats
-            }
-
-            {p_healed,
-             "🏥 #{player.name} visited the Hospital! Fully healed back to 3 HP (Healthy)!"}
-          else
-            p_with_feat = %{base_player | discovered_rel_features: updated_rel_feats}
-            {p_with_feat, "🏥 #{player.name} visited the Hospital (already at full 3 HP)."}
-          end
-
-        {target_pos, "hospital", t_prefix <> msg, updated_player}
-
-      # 4. Arsenal Cell: Restock Ammunition to 3 bullets & 3 grenades + Rope
       target_pos == game.arsenal ->
-        updated_rel_feats = Map.put(rel_feats, {rx, ry}, "arsenal")
-        curr_items = Map.get(base_player, :items, MapSet.new())
-        has_rope? = MapSet.member?(curr_items, :rope)
-        new_items = MapSet.put(curr_items, :rope)
+        resolve_arsenal_landing(base_player, target_pos, {rx, ry}, rel_feats, t_prefix)
 
-        {updated_player, msg} =
-          if base_player.bullets < 3 or Map.get(base_player, :grenades, 3) < 3 or not has_rope? do
-            p_reloaded = %{
-              base_player
-              | bullets: 3,
-                grenades: 3,
-                items: new_items,
-                discovered_rel_features: updated_rel_feats
-            }
-
-            rope_msg = if not has_rope?, do: " and picked up a Rope 🪢!", else: "!"
-
-            {p_reloaded,
-             "⚔️ #{player.name} visited the Arsenal! Ammunition fully reloaded (3/3 💣🔫)#{rope_msg}"}
-          else
-            p_with_feat = %{base_player | discovered_rel_features: updated_rel_feats}
-
-            {p_with_feat,
-             "⚔️ #{player.name} visited the Arsenal (already fully loaded with ammo & Rope 🪢)."}
-          end
-
-        {target_pos, "arsenal", t_prefix <> msg, updated_player}
-
-      # 5. Exit cell (carrying treasure)
       target_pos == game.exit and base_player.has_treasure ->
-        updated_rel_feats = Map.put(rel_feats, {rx, ry}, "exit")
+        resolve_exit_landing(base_player, target_pos, {rx, ry}, rel_feats)
 
-        updated_player = %{
-          base_player
-          | status: :escaped,
-            discovered_rel_features: updated_rel_feats
-        }
-
-        {target_pos, "escaped", "🏆 #{player.name} ESCAPED THE LABYRINTH WITH THE TREASURE!",
-         updated_player}
-
-      # 6. Clear cell / Treasure pickup
       treasure_grabbed? ->
-        updated_rel_feats = Map.put(rel_feats, {rx, ry}, "treasure")
-        updated_player = %{base_player | discovered_rel_features: updated_rel_feats}
+        resolve_treasure_landing(base_player, target_pos, {rx, ry}, rel_feats)
 
-        {target_pos, "treasure", "💎 #{player.name} FOUND THE TREASURE! Now escape to the Exit!",
-         updated_player}
-
-      # 7. Regular clear cell
       true ->
         {target_pos, "moved", "#{player.name} moved 1 cell.", base_player}
     end
+  end
+
+  defp resolve_pit_landing(base_player, target_pos, {rx, ry}, rel_feats, t_prefix) do
+    updated_rel_feats = Map.put(rel_feats, {rx, ry}, "pit")
+    player_items = Map.get(base_player, :items, MapSet.new())
+
+    if MapSet.member?(player_items, :rope) do
+      updated_items = MapSet.delete(player_items, :rope)
+
+      updated_player = %{
+        base_player
+        | items: updated_items,
+          discovered_rel_features: updated_rel_feats
+      }
+
+      msg =
+        "#{t_prefix}🪢 #{base_player.name} fell into a Pit but used a Rope to climb out safely!"
+
+      {target_pos, "pit_escaped", msg, updated_player}
+    else
+      updated_player = %{
+        base_player
+        | status: :stunned,
+          discovered_rel_features: updated_rel_feats
+      }
+
+      msg = "#{t_prefix}#{base_player.name} fell into a Pit trap! (Loses next turn)"
+      {target_pos, "pit", msg, updated_player}
+    end
+  end
+
+  defp resolve_teleport_landing(
+         game,
+         base_player,
+         target_pos,
+         {rx, ry},
+         visited,
+         rel_feats,
+         t_prefix
+       ) do
+    destination = get_teleport_dest(game.teleporters, target_pos)
+    teleport_visited = MapSet.put(visited, destination)
+    updated_rel_feats = Map.put(rel_feats, {rx, ry}, "teleport")
+
+    dest_grabbed? =
+      parse_point(destination) == parse_point(game.treasure) and not base_player.has_treasure
+
+    updated_player = %{
+      base_player
+      | x: elem(destination, 0),
+        y: elem(destination, 1),
+        visited_cells: teleport_visited,
+        discovered_rel_features: updated_rel_feats,
+        has_treasure: base_player.has_treasure or dest_grabbed?
+    }
+
+    warp_prefix = if dest_grabbed?, do: "💎 GRABBED TREASURE AT WARP DESTINATION! ", else: ""
+
+    msg =
+      "#{t_prefix}#{warp_prefix}#{base_player.name} stepped on a Teleporter and was warped to #{inspect(destination)}!"
+
+    {destination, "teleport", msg, updated_player}
+  end
+
+  defp resolve_hospital_landing(base_player, target_pos, {rx, ry}, rel_feats, t_prefix) do
+    updated_rel_feats = Map.put(rel_feats, {rx, ry}, "hospital")
+
+    {updated_player, msg} =
+      if base_player.status == :wounded or base_player.health < 3 do
+        p_healed = %{
+          base_player
+          | health: 3,
+            status: :active,
+            discovered_rel_features: updated_rel_feats
+        }
+
+        {p_healed,
+         "🏥 #{base_player.name} visited the Hospital! Fully healed back to 3 HP (Healthy)!"}
+      else
+        p_with_feat = %{base_player | discovered_rel_features: updated_rel_feats}
+        {p_with_feat, "🏥 #{base_player.name} visited the Hospital (already at full 3 HP)."}
+      end
+
+    {target_pos, "hospital", t_prefix <> msg, updated_player}
+  end
+
+  defp resolve_arsenal_landing(base_player, target_pos, {rx, ry}, rel_feats, t_prefix) do
+    updated_rel_feats = Map.put(rel_feats, {rx, ry}, "arsenal")
+    curr_items = Map.get(base_player, :items, MapSet.new())
+    has_rope? = MapSet.member?(curr_items, :rope)
+    new_items = MapSet.put(curr_items, :rope)
+
+    {updated_player, msg} =
+      if base_player.bullets < 3 or Map.get(base_player, :grenades, 3) < 3 or not has_rope? do
+        p_reloaded = %{
+          base_player
+          | bullets: 3,
+            grenades: 3,
+            items: new_items,
+            discovered_rel_features: updated_rel_feats
+        }
+
+        rope_msg = if not has_rope?, do: " and picked up a Rope 🪢!", else: "!"
+
+        {p_reloaded,
+         "⚔️ #{base_player.name} visited the Arsenal! Ammunition fully reloaded (3/3 💣🔫)#{rope_msg}"}
+      else
+        p_with_feat = %{base_player | discovered_rel_features: updated_rel_feats}
+
+        {p_with_feat,
+         "⚔️ #{base_player.name} visited the Arsenal (already fully loaded with ammo & Rope 🪢)."}
+      end
+
+    {target_pos, "arsenal", t_prefix <> msg, updated_player}
+  end
+
+  defp resolve_exit_landing(base_player, target_pos, {rx, ry}, rel_feats) do
+    updated_rel_feats = Map.put(rel_feats, {rx, ry}, "exit")
+
+    updated_player = %{
+      base_player
+      | status: :escaped,
+        discovered_rel_features: updated_rel_feats
+    }
+
+    {target_pos, "escaped", "🏆 #{base_player.name} ESCAPED THE LABYRINTH WITH THE TREASURE!",
+     updated_player}
+  end
+
+  defp resolve_treasure_landing(base_player, target_pos, {rx, ry}, rel_feats) do
+    updated_rel_feats = Map.put(rel_feats, {rx, ry}, "treasure")
+    updated_player = %{base_player | discovered_rel_features: updated_rel_feats}
+
+    {target_pos, "treasure", "💎 #{base_player.name} FOUND THE TREASURE! Now escape to the Exit!",
+     updated_player}
   end
 
   defp advance_turn(game, turn_summary) do
@@ -703,8 +739,14 @@ defmodule Labyrinth.Game.Engine do
 
     new_log_batch = [divider, formatted_msg] ++ stink_logs ++ sound_logs ++ [turn_summary.message]
     updated_logs = new_log_batch ++ game.log_entries
+    turn_counter = (game.turn_counter || 0) + 1
 
-    game = %{game | last_action_result: turn_summary, log_entries: updated_logs}
+    game = %{
+      game
+      | last_action_result: turn_summary,
+        log_entries: updated_logs,
+        turn_counter: turn_counter
+    }
 
     # Check for game winner
     escaped_player = Enum.find(game.players, fn p -> p.status == :escaped end)

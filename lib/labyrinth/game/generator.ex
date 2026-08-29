@@ -14,23 +14,33 @@ defmodule Labyrinth.Game.Generator do
     - `:width` (default 10)
     - `:height` (default 10)
     - `:pit_count` (default 3)
-    - `:teleport_count` (default 1)
+    - `:teleport_count` (default 5)
+    - `:wall_density` (default 70)
   """
   def generate_map(opts \\ []) do
-    width = Keyword.get(opts, :width, 10) |> max(5) |> min(20)
-    height = Keyword.get(opts, :height, 10) |> max(5) |> min(20)
-    pit_count = Keyword.get(opts, :pit_count, 3)
-    teleport_count = Keyword.get(opts, :teleport_count, 5)
-    wall_density = Keyword.get(opts, :wall_density, 70)
+    opts_map = %{
+      width: Keyword.get(opts, :width, 10) |> max(5) |> min(20),
+      height: Keyword.get(opts, :height, 10) |> max(5) |> min(20),
+      pit_count: Keyword.get(opts, :pit_count, 3),
+      teleport_count: Keyword.get(opts, :teleport_count, 5),
+      wall_density: Keyword.get(opts, :wall_density, 70)
+    }
 
-    do_generate(width, height, pit_count, teleport_count, wall_density, 1)
+    do_generate(opts_map, 1)
   end
 
-  defp do_generate(width, height, pit_count, teleport_count, wall_density, attempt)
-       when attempt <= 30 do
+  defp do_generate(opts, attempt) when attempt <= 30 do
+    %{
+      width: width,
+      height: height,
+      pit_count: pit_count,
+      teleport_count: teleport_count,
+      wall_density: wall_density
+    } = opts
+
     entrance = {0, 0}
 
-    # Gather all perimeter edge cells and pick random exit cell (distinct from entrance)
+    # Gather perimeter edge cells and pick random exit cell (distinct from entrance)
     perimeter_cells =
       for x <- 0..(width - 1),
           y <- 0..(height - 1),
@@ -89,33 +99,17 @@ defmodule Labyrinth.Game.Generator do
           {:ok, Map.put(map_data, :validation_info, validation_info)}
 
         {:error, _reason} ->
-          do_generate(width, height, pit_count, teleport_count, wall_density, attempt + 1)
+          do_generate(opts, attempt + 1)
       end
     else
-      do_generate(width, height, pit_count, teleport_count, wall_density, attempt + 1)
+      do_generate(opts, attempt + 1)
     end
   end
 
-  defp do_generate(width, height, _pit_count, _teleport_count, _wall_density, _attempt) do
-    # Fallback with guaranteed disjoint entity positions
-    all_cells = for x <- 0..(width - 1), y <- 0..(height - 1), do: {x, y}
-    [entrance, exit_cell, treasure, hospital, arsenal, minotaur | _] = Enum.shuffle(all_cells)
-
-    map_data = %{
-      width: width,
-      height: height,
-      entrance: entrance,
-      exit: exit_cell,
-      treasure: treasure,
-      hospital: hospital,
-      arsenal: arsenal,
-      minotaur: minotaur,
-      pits: [],
-      teleporters: [],
-      walls: []
-    }
-
-    {:ok, Map.put(map_data, :validation_info, %{method: :fallback})}
+  defp do_generate(opts, _attempt) do
+    # When 30 attempts fail, retry with relaxed wall density to guarantee solvable maze with features intact
+    relaxed_opts = %{opts | wall_density: max(10, div(opts.wall_density, 2))}
+    do_generate(relaxed_opts, 1)
   end
 
   @doc """
@@ -155,7 +149,6 @@ defmodule Labyrinth.Game.Generator do
   defp parse_point(_), do: nil
 
   defp generate_maze_walls(width, height, wall_density) do
-    # Create grid of cells, connect adjacent with full internal walls
     edges =
       for x <- 0..(width - 1), y <- 0..(height - 1), into: [] do
         e1 = if x + 1 < width, do: [MapUtils.normalize_wall({x, y}, {x + 1, y})], else: []
@@ -174,7 +167,6 @@ defmodule Labyrinth.Game.Generator do
         edges
 
       true ->
-        # Kruskal's MST to form initial spanning maze
         sets = for x <- 0..(width - 1), y <- 0..(height - 1), into: %{}, do: {{x, y}, {x, y}}
         shuffled_edges = Enum.shuffle(edges)
 
@@ -184,11 +176,9 @@ defmodule Labyrinth.Game.Generator do
             root2 = find_root(set_acc, p2)
 
             if root1 != root2 do
-              # Carve path (don't add to walls)
               new_set_acc = Map.put(set_acc, root1, root2)
               {wall_acc, new_set_acc}
             else
-              # Keep as wall
               {[edge | wall_acc], set_acc}
             end
           end)

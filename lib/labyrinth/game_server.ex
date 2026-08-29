@@ -1,7 +1,7 @@
 defmodule Labyrinth.GameServer do
   @moduledoc """
   OTP GenServer representing an active Labyrinth game session.
-  Manages state, process broadcasting, bot scheduling, and turn persistence.
+  Manages state, process broadcasting, bot scheduling, turn timer, and async turn persistence.
   """
   use GenServer, restart: :transient
 
@@ -10,6 +10,12 @@ defmodule Labyrinth.GameServer do
   alias Labyrinth.Games
 
   @pubsub Labyrinth.PubSub
+  @max_players 4
+
+  defmodule State do
+    @moduledoc false
+    defstruct [:engine, :timer_ref]
+  end
 
   # Client API
 
@@ -82,24 +88,23 @@ defmodule Labyrinth.GameServer do
               difficulty: difficulty
             )
 
-          # Save game record in DB
-          {:ok, _db_game} =
-            Games.create_game(%{
-              id: e.id,
-              name: e.name,
-              width: e.width,
-              height: e.height,
-              status: "lobby",
-              map_data: serialize_map_data(e),
-              settings: %{
-                bot_count: bot_count,
-                pit_count: pit_count,
-                teleport_count: teleport_count,
-                wall_density: wall_density,
-                minotaur_enabled: minotaur_enabled,
-                difficulty: Atom.to_string(difficulty)
-              }
-            })
+          # Save game record in DB asynchronously
+          async_create_game(%{
+            id: e.id,
+            name: e.name,
+            width: e.width,
+            height: e.height,
+            status: "lobby",
+            map_data: serialize_map_data(e),
+            settings: %{
+              bot_count: bot_count,
+              pit_count: pit_count,
+              teleport_count: teleport_count,
+              wall_density: wall_density,
+              minotaur_enabled: minotaur_enabled,
+              difficulty: Atom.to_string(difficulty)
+            }
+          })
 
           # Add requested bots
           if bot_count > 0 do
@@ -139,108 +144,101 @@ defmodule Labyrinth.GameServer do
           Engine.add_player(e, "bot-1", "Bot Explorer 1", true)
       end
 
-    {:ok, engine}
+    {:ok, %State{engine: engine, timer_ref: nil}}
   end
 
   @impl true
-  def handle_call(:get_state, _from, engine) do
-    {:reply, engine, engine}
+  def handle_call(:get_state, _from, %State{engine: engine} = state) do
+    {:reply, engine, state}
   end
 
   @impl true
-  def handle_call({:add_player, player_id, name, is_bot}, _from, engine) do
-    updated_engine = Engine.add_player(engine, player_id, name, is_bot)
-    broadcast_state(updated_engine)
-    {:reply, {:ok, updated_engine}, updated_engine}
+  def handle_call({:add_player, player_id, name, is_bot}, _from, %State{engine: engine} = state) do
+    player_exists? = Enum.any?(engine.players, fn p -> p.id == player_id end)
+
+    if not player_exists? and length(engine.players) >= @max_players do
+      {:reply, {:error, :lobby_full}, state}
+    else
+      updated_engine = Engine.add_player(engine, player_id, name, is_bot)
+      broadcast_state(updated_engine)
+      {:reply, {:ok, updated_engine}, %{state | engine: updated_engine}}
+    end
   end
 
   @impl true
-  def handle_call({:add_bot, bot_name}, _from, engine) do
+  def handle_call({:add_bot, bot_name}, _from, %State{engine: engine} = state) do
     bot_count = Enum.count(engine.players, & &1.is_bot) + 1
     name = bot_name || "Bot Explorer #{bot_count}"
     bot_id = "bot-#{bot_count}-#{System.unique_integer([:positive])}"
 
     updated_engine = Engine.add_player(engine, bot_id, name, true)
     broadcast_state(updated_engine)
-    {:reply, {:ok, updated_engine}, updated_engine}
+    {:reply, {:ok, updated_engine}, %{state | engine: updated_engine}}
   end
 
   @impl true
-  def handle_call(:start_game, _from, engine) do
+  def handle_call(:start_game, _from, %State{engine: engine} = state) do
     updated_engine = Engine.start_game(engine)
-    Games.update_game_status(updated_engine.id, updated_engine.status)
+    async_update_game_status(updated_engine.id, updated_engine.status)
 
     {final_engine, _last_bot_summary} = TurnFSM.process_bot_sequence(updated_engine)
 
-    reset_and_schedule_timer(final_engine)
+    new_state = reset_and_schedule_timer(state, final_engine)
     broadcast_state(final_engine)
-    {:reply, {:ok, final_engine}, final_engine}
+    {:reply, {:ok, final_engine}, new_state}
   end
 
   @impl true
-  def handle_call({:force_turn, player_id}, _from, engine) do
+  def handle_call({:force_turn, player_id}, _from, %State{engine: engine} = state) do
     if player_in_game?(engine, player_id) do
       idx = Enum.find_index(engine.players, fn p -> p.id == player_id end)
       updated_engine = if idx != nil, do: %{engine | turn_index: idx}, else: engine
       {final_engine, _} = TurnFSM.process_bot_sequence(updated_engine)
-      reset_and_schedule_timer(final_engine)
+      new_state = reset_and_schedule_timer(state, final_engine)
       broadcast_state(final_engine)
-      {:reply, {:ok, final_engine}, final_engine}
+      {:reply, {:ok, final_engine}, new_state}
     else
-      {:reply, {:error, :unknown_player}, engine}
+      {:reply, {:error, :unknown_player}, state}
     end
   end
 
   @impl true
-  def handle_call({:take_turn, player_id, action}, _from, engine) do
+  def handle_call({:take_turn, player_id, action}, _from, %State{engine: engine} = state) do
     case Engine.process_turn(engine, player_id, action) do
       {%Engine{} = updated_engine, summary} ->
-        # Persist human turn in DB
-        Games.record_turn(%{
-          game_id: updated_engine.id,
-          turn_number: length(Games.list_turns_for_game(updated_engine.id)) + 1,
-          player_id: player_id,
-          player_name: summary.player_name,
-          action_type: summary.action_type,
-          direction: summary.direction,
-          result: summary.result,
-          sound_effects: summary.sound_effects,
-          position_before: %{
-            "x" => elem(summary.pos_before, 0),
-            "y" => elem(summary.pos_before, 1)
-          },
-          position_after: %{"x" => elem(summary.pos_after, 0), "y" => elem(summary.pos_after, 1)}
-        })
+        # Persist turn in DB asynchronously using engine turn_counter
+        turn_num = updated_engine.turn_counter || 1
+        async_record_turn(updated_engine.id, turn_num, player_id, summary)
 
         if updated_engine.status == :finished do
-          Games.update_game_status(updated_engine.id, :finished, updated_engine.winner_name)
-          reset_and_schedule_timer(updated_engine)
+          async_update_game_status(updated_engine.id, :finished, updated_engine.winner_name)
+          new_state = reset_and_schedule_timer(state, updated_engine)
           broadcast_state(updated_engine)
-          {:reply, {:ok, updated_engine, summary}, updated_engine}
+          {:reply, {:ok, updated_engine, summary}, new_state}
         else
           # Process any consecutive bot turns deterministically via TurnFSM
           {final_engine, last_bot_summary} = TurnFSM.process_bot_sequence(updated_engine)
           effective_summary = last_bot_summary || summary
 
-          reset_and_schedule_timer(final_engine)
+          new_state = reset_and_schedule_timer(state, final_engine)
           broadcast_state(final_engine)
-          {:reply, {:ok, final_engine, effective_summary}, final_engine}
+          {:reply, {:ok, final_engine, effective_summary}, new_state}
         end
 
       {:error, reason} ->
-        {:reply, {:error, reason}, engine}
+        {:reply, {:error, reason}, state}
     end
   end
 
   @impl true
-  def handle_call({:reset_bot_rel_tracking, bot_id}, _from, engine) do
+  def handle_call({:reset_bot_rel_tracking, bot_id}, _from, %State{engine: engine} = state) do
     engine_updated = Engine.reset_bot_rel_tracking(engine, bot_id)
     broadcast_state(engine_updated)
-    {:reply, {:ok, engine_updated}, engine_updated}
+    {:reply, {:ok, engine_updated}, %{state | engine: engine_updated}}
   end
 
   @impl true
-  def handle_info({:turn_timeout, player_id, turn_idx, round_num}, engine) do
+  def handle_info({:turn_timeout, player_id, turn_idx, round_num}, %State{engine: engine} = state) do
     curr = Engine.current_player(engine)
 
     if ((engine.status == :in_progress and curr) && curr.id == player_id) and
@@ -250,59 +248,91 @@ defmodule Labyrinth.GameServer do
 
       case Engine.process_turn(game_with_log, player_id, :pass) do
         {%Engine{} = updated_engine, summary} ->
-          Games.record_turn(%{
-            game_id: updated_engine.id,
-            turn_number: length(Games.list_turns_for_game(updated_engine.id)) + 1,
-            player_id: player_id,
-            player_name: summary.player_name,
-            action_type: summary.action_type,
-            direction: summary.direction,
-            result: summary.result,
-            sound_effects: summary.sound_effects,
-            position_before: %{
-              "x" => elem(summary.pos_before, 0),
-              "y" => elem(summary.pos_before, 1)
-            },
-            position_after: %{
-              "x" => elem(summary.pos_after, 0),
-              "y" => elem(summary.pos_after, 1)
-            }
-          })
+          turn_num = updated_engine.turn_counter || 1
+          async_record_turn(updated_engine.id, turn_num, player_id, summary)
 
           {final_engine, _} = TurnFSM.process_bot_sequence(updated_engine)
-          reset_and_schedule_timer(final_engine)
+          new_state = reset_and_schedule_timer(state, final_engine)
           broadcast_state(final_engine)
 
-          {:noreply, final_engine}
+          {:noreply, new_state}
 
         _ ->
-          {:noreply, engine}
+          {:noreply, state}
       end
     else
-      {:noreply, engine}
+      {:noreply, state}
     end
   end
 
-  defp reset_and_schedule_timer(engine) do
-    case Process.get(:turn_timer_ref) do
-      nil -> :ok
-      ref -> Process.cancel_timer(ref)
-    end
+  # Helper functions
+
+  defp reset_and_schedule_timer(%State{timer_ref: ref} = state, engine) do
+    if ref, do: Process.cancel_timer(ref)
 
     if engine.status == :in_progress do
       curr = Engine.current_player(engine)
 
       if curr && not curr.is_bot && curr.status in [:active, :wounded, :stunned] do
-        ref =
+        new_ref =
           Process.send_after(
             self(),
             {:turn_timeout, curr.id, engine.turn_index, engine.round_number},
             30_000
           )
 
-        Process.put(:turn_timer_ref, ref)
+        %{state | engine: engine, timer_ref: new_ref}
+      else
+        %{state | engine: engine, timer_ref: nil}
       end
+    else
+      %{state | engine: engine, timer_ref: nil}
     end
+  end
+
+  defp start_async_db_task(func) do
+    if Application.get_env(:labyrinth, :async_db, true) and Mix.env() != :test do
+      Task.Supervisor.start_child(Labyrinth.TaskSupervisor, func)
+    else
+      func.()
+    end
+  end
+
+  defp async_create_game(attrs) do
+    start_async_db_task(fn ->
+      Games.create_game(attrs)
+    end)
+  end
+
+  defp async_record_turn(game_id, turn_number, player_id, summary) do
+    turn_attrs = %{
+      game_id: game_id,
+      turn_number: turn_number,
+      player_id: player_id,
+      player_name: summary.player_name,
+      action_type: summary.action_type,
+      direction: summary.direction,
+      result: summary.result,
+      sound_effects: summary.sound_effects,
+      position_before: %{
+        "x" => elem(summary.pos_before, 0),
+        "y" => elem(summary.pos_before, 1)
+      },
+      position_after: %{
+        "x" => elem(summary.pos_after, 0),
+        "y" => elem(summary.pos_after, 1)
+      }
+    }
+
+    start_async_db_task(fn ->
+      Games.record_turn(turn_attrs)
+    end)
+  end
+
+  defp async_update_game_status(game_id, status, winner_name \\ nil) do
+    start_async_db_task(fn ->
+      Games.update_game_status(game_id, status, winner_name)
+    end)
   end
 
   defp player_in_game?(engine, player_id) do

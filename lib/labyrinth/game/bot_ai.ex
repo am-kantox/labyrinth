@@ -58,40 +58,34 @@ defmodule Labyrinth.Game.BotAI do
   defp explore_direction(game, bot, pos) do
     valid_dirs =
       @dirs
-      |> Enum.map(fn d -> {d, neighbor_pos(pos, d)} end)
-      |> Enum.reject(fn {_d, npos} ->
-        not MapUtils.in_bounds?(npos, game.width, game.height) or
-          MapSet.member?(bot.known_walls, MapUtils.normalize_wall(pos, npos))
+      |> Enum.filter(fn d ->
+        target = neighbor_pos(pos, d)
+
+        MapUtils.in_bounds?(target, game.width, game.height) and
+          not MapSet.member?(bot.known_walls, MapUtils.normalize_wall(pos, target))
       end)
 
-    if valid_dirs == [] do
-      :north
-    else
-      # Prefer unvisited cells
-      unvisited =
-        Enum.filter(valid_dirs, fn {_d, npos} -> not MapSet.member?(bot.visited_cells, npos) end)
+    unvisited_dirs =
+      Enum.filter(valid_dirs, fn d ->
+        not MapSet.member?(bot.visited_cells, neighbor_pos(pos, d))
+      end)
 
-      case unvisited do
-        [first | _] ->
-          elem(first, 0)
-
-        [] ->
-          # All adjacent visited -> pick random
-          {dir, _} = Enum.random(valid_dirs)
-          dir
-      end
+    case unvisited_dirs do
+      [dir | _] -> dir
+      [] -> Enum.random(valid_dirs ++ [:north])
     end
   end
 
   defp random_valid_dir(pos, w, h, known_walls) do
-    @dirs
-    |> Enum.shuffle()
-    |> Enum.find(:north, fn d ->
-      npos = neighbor_pos(pos, d)
+    valid =
+      Enum.filter(@dirs, fn d ->
+        target = neighbor_pos(pos, d)
 
-      MapUtils.in_bounds?(npos, w, h) and
-        not MapSet.member?(known_walls, MapUtils.normalize_wall(pos, npos))
-    end)
+        MapUtils.in_bounds?(target, w, h) and
+          not MapSet.member?(known_walls, MapUtils.normalize_wall(pos, target))
+      end)
+
+    Enum.random(valid ++ [:north])
   end
 
   defp find_opponent_in_line_of_sight(game, bot) do
@@ -118,15 +112,16 @@ defmodule Labyrinth.Game.BotAI do
   defp find_bfs_direction(start, target, w, h, known_walls) do
     queue = :queue.in({start, nil}, :queue.new())
     visited = MapSet.new([start])
-    bfs(queue, visited, target, w, h, known_walls)
+    env = %{target: target, width: w, height: h, known_walls: known_walls}
+    bfs(queue, visited, env)
   end
 
-  defp bfs(queue, visited, target, w, h, known_walls) do
+  defp bfs(queue, visited, env) do
     case :queue.out(queue) do
       {:empty, _} ->
         nil
 
-      {{:value, {^target, first_dir}}, _rest} ->
+      {{:value, {target, first_dir}}, _rest} when target == env.target ->
         first_dir
 
       {{:value, {curr, first_dir}}, rest_queue} ->
@@ -136,8 +131,8 @@ defmodule Labyrinth.Game.BotAI do
             {d, neighbor_pos(curr, d), if(first_dir == nil, do: d, else: first_dir)}
           end)
           |> Enum.reject(fn {_d, npos, _fdir} ->
-            not MapUtils.in_bounds?(npos, w, h) or
-              MapSet.member?(known_walls, MapUtils.normalize_wall(curr, npos)) or
+            not MapUtils.in_bounds?(npos, env.width, env.height) or
+              MapSet.member?(env.known_walls, MapUtils.normalize_wall(curr, npos)) or
               MapSet.member?(visited, npos)
           end)
 
@@ -146,7 +141,7 @@ defmodule Labyrinth.Game.BotAI do
             {:queue.in({npos, fdir}, q_acc), MapSet.put(v_acc, npos)}
           end)
 
-        bfs(new_queue, new_visited, target, w, h, known_walls)
+        bfs(new_queue, new_visited, env)
     end
   end
 

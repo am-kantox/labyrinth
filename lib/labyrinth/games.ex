@@ -1,6 +1,7 @@
 defmodule Labyrinth.Games do
   @moduledoc """
   Database context for Labyrinth games, history logs, and player post-its.
+  Includes authorization checks to ensure players only access and modify their own assets.
   """
 
   import Ecto.Query, warn: false
@@ -53,11 +54,9 @@ defmodule Labyrinth.Games do
   end
 
   def get_db_game(id) do
-    try do
-      Repo.get(Game, id)
-    rescue
-      _ -> nil
-    end
+    Repo.get(Game, id)
+  rescue
+    Ecto.QueryError -> nil
   end
 
   def get_game(id) do
@@ -147,12 +146,8 @@ defmodule Labyrinth.Games do
   end
 
   def list_turns_for_game(game_id) do
-    try do
-      from(t in Turn, where: t.game_id == ^game_id, order_by: [asc: t.turn_number])
-      |> Repo.all()
-    rescue
-      _ -> []
-    end
+    from(t in Turn, where: t.game_id == ^game_id, order_by: [asc: t.turn_number])
+    |> Repo.all()
   end
 
   def list_post_its(game_id, player_id) do
@@ -163,32 +158,81 @@ defmodule Labyrinth.Games do
     |> Repo.all()
   end
 
-  def save_post_it(attrs) do
+  def get_post_it(id) do
+    Repo.get(PostIt, id)
+  end
+
+  def can_modify_post_it?(%PostIt{player_id: owner_id}, requesting_player_id) do
+    owner_id == requesting_player_id
+  end
+
+  def can_modify_post_it?(id, requesting_player_id) when is_binary(id) or is_integer(id) do
+    case get_post_it(id) do
+      %PostIt{} = post_it -> can_modify_post_it?(post_it, requesting_player_id)
+      nil -> false
+    end
+  end
+
+  def can_modify_post_it?(_, _), do: false
+
+  def save_post_it(attrs, requesting_player_id \\ nil) do
     case attrs["id"] || attrs[:id] do
       nil ->
+        final_attrs =
+          if requesting_player_id do
+            Map.put(attrs, "player_id", requesting_player_id)
+          else
+            attrs
+          end
+
         %PostIt{}
-        |> PostIt.changeset(attrs)
+        |> PostIt.changeset(final_attrs)
         |> Repo.insert()
 
       id ->
         case Repo.get(PostIt, id) do
           nil ->
-            %PostIt{}
-            |> PostIt.changeset(attrs)
-            |> Repo.insert()
+            {:error, :not_found}
 
           post_it ->
-            post_it
-            |> PostIt.changeset(attrs)
-            |> Repo.update()
+            if requesting_player_id == nil or post_it.player_id == requesting_player_id do
+              post_it
+              |> PostIt.changeset(attrs)
+              |> Repo.update()
+            else
+              {:error, :unauthorized}
+            end
         end
     end
   end
 
-  def delete_post_it(id) do
+  def delete_post_it(id, requesting_player_id \\ nil) do
     case Repo.get(PostIt, id) do
-      nil -> {:error, :not_found}
-      post_it -> Repo.delete(post_it)
+      nil ->
+        {:error, :not_found}
+
+      post_it ->
+        if requesting_player_id == nil or post_it.player_id == requesting_player_id do
+          Repo.delete(post_it)
+        else
+          {:error, :unauthorized}
+        end
+    end
+  end
+
+  def toggle_stick_post_it(id, requesting_player_id \\ nil) do
+    case Repo.get(PostIt, id) do
+      nil ->
+        {:error, :not_found}
+
+      post_it ->
+        if requesting_player_id == nil or post_it.player_id == requesting_player_id do
+          post_it
+          |> PostIt.changeset(%{is_stuck: not post_it.is_stuck})
+          |> Repo.update()
+        else
+          {:error, :unauthorized}
+        end
     end
   end
 end
