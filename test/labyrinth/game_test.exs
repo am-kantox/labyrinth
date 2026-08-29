@@ -2,6 +2,7 @@ defmodule Labyrinth.GameTest do
   use Labyrinth.DataCase, async: false
 
   alias Labyrinth.Game.{Engine, Generator}
+  alias Labyrinth.Game.Engine.{Combat, Landing}
   alias Labyrinth.Prolog.Validator
   alias Labyrinth.Games
   alias Labyrinth.MapUtils
@@ -248,6 +249,56 @@ defmodule Labyrinth.GameTest do
       assert survivor.status == :wounded
     end
 
+    test "minotaur sprint accelerates when unseen for 3+ rounds using dedicated field" do
+      game = Engine.new_game("Minotaur Sprint Test", width: 6, height: 6)
+      game = Engine.add_player(game, "p1", "Runner")
+      p1 = List.first(game.players)
+
+      # Player far away (>3 cells) so minotaur accumulates unseen count.
+      ready = %{
+        game
+        | status: :in_progress,
+          minotaur: {0, 0},
+          minotaur_unseen: 0,
+          walls: MapSet.new(),
+          players: [%{p1 | x: 5, y: 5, health: 3, status: :active}]
+      }
+
+      # After 3 rounds of being unseen, the minotaur should sprint 2 cells.
+      {after_round1, _} = Engine.process_turn(ready, "p1", :pass)
+      assert after_round1.minotaur_unseen == 1
+
+      {after_round2, _} = Engine.process_turn(after_round1, "p1", :pass)
+      assert after_round2.minotaur_unseen == 2
+
+      {after_round3, _} = Engine.process_turn(after_round2, "p1", :pass)
+      assert after_round3.minotaur_unseen == 3
+
+      # Minotaur moves 1 cell in rounds 1 & 2, then sprints 2 cells in round 3
+      # (unseen >= 3), for a total of 4 cells from (0,0) chasing toward (5,5).
+      {mx, my} = after_round3.minotaur
+      assert {mx, my} == {4, 0}
+    end
+
+    test "minotaur unseen counter resets when player is observed close by" do
+      game = Engine.new_game("Minotaur Reset Test", width: 6, height: 6)
+      game = Engine.add_player(game, "p1", "Observer")
+      p1 = List.first(game.players)
+
+      ready = %{
+        game
+        | status: :in_progress,
+          minotaur: {0, 0},
+          minotaur_unseen: 2,
+          walls: MapSet.new(),
+          players: [%{p1 | x: 1, y: 0, health: 3, status: :active}]
+      }
+
+      # Player is within 3 cells, so unseen counter should reset to 0.
+      {updated_game, _} = Engine.process_turn(ready, "p1", :pass)
+      assert updated_game.minotaur_unseen == 0
+    end
+
     test "GameServer auto-passes turn when 30s turn timeout is received" do
       game_id = Ecto.UUID.generate()
 
@@ -268,6 +319,201 @@ defmodule Labyrinth.GameTest do
       assert Enum.any?(updated.log_entries, fn entry ->
                String.contains?(entry, "Auto-passed turn for LazyPlayer")
              end)
+    end
+  end
+
+  describe "Combat module (Engine.Combat)" do
+    test "trace_shot hits a player in line of sight" do
+      game = Engine.new_game("Combat Hit Test", width: 6, height: 6)
+
+      shooter = %{
+        id: "s1",
+        name: "Shooter",
+        is_bot: false,
+        x: 0,
+        y: 0,
+        health: 3,
+        bullets: 3,
+        status: :active
+      }
+
+      target = %{
+        id: "t1",
+        name: "Target",
+        is_bot: false,
+        x: 2,
+        y: 0,
+        health: 3,
+        bullets: 3,
+        status: :active
+      }
+
+      game = %{game | walls: MapSet.new(), players: [shooter, target]}
+
+      {result, msg, target_id} = Combat.trace_shot(game, {0, 0}, :east, 3, "s1")
+      assert result == "shot_hit"
+      assert target_id == "t1"
+      assert String.contains?(msg, "hit Target")
+    end
+
+    test "trace_shot returns shot_miss in an empty corridor" do
+      game = Engine.new_game("Combat Miss Test", width: 6, height: 6)
+
+      shooter = %{
+        id: "s1",
+        name: "Shooter",
+        is_bot: false,
+        x: 0,
+        y: 0,
+        bullets: 3,
+        status: :active
+      }
+
+      game = %{game | walls: MapSet.new(), minotaur: nil, players: [shooter]}
+
+      {result, _msg, target_id} = Combat.trace_shot(game, {0, 0}, :east, 3, "s1")
+      assert result == "shot_miss"
+      assert target_id == nil
+    end
+
+    test "apply_shot_damage eliminates a player at 1 HP" do
+      game = Engine.new_game("Combat Elim Test", width: 6, height: 6)
+
+      player = %{
+        id: "p1",
+        name: "Victim",
+        is_bot: false,
+        x: 0,
+        y: 0,
+        health: 1,
+        bullets: 0,
+        status: :wounded,
+        has_treasure: false
+      }
+
+      game = %{game | players: [player]}
+
+      updated = Combat.apply_shot_damage(game, "p1")
+      victim = List.first(updated.players)
+      assert victim.health == 0
+      assert victim.status == :eliminated
+    end
+
+    test "apply_shot_damage drops treasure when the player was carrying it" do
+      game = Engine.new_game("Combat Drop Test", width: 6, height: 6)
+
+      player = %{
+        id: "p1",
+        name: "Carrier",
+        is_bot: false,
+        x: 3,
+        y: 3,
+        health: 3,
+        bullets: 0,
+        status: :active,
+        has_treasure: true
+      }
+
+      game = %{game | players: [player], treasure: {2, 2}}
+
+      updated = Combat.apply_shot_damage(game, "p1")
+      assert updated.treasure == {3, 3}
+      carrier = List.first(updated.players)
+      assert carrier.has_treasure == false
+      assert Enum.any?(updated.log_entries, &String.contains?(&1, "DROPPED THE TREASURE"))
+    end
+  end
+
+  describe "Landing module (Engine.Landing)" do
+    test "resolve returns moved for a plain empty cell" do
+      game = Engine.new_game("Landing Move Test", width: 6, height: 6)
+
+      player = %{
+        id: "p1",
+        name: "Explorer",
+        is_bot: false,
+        x: 0,
+        y: 0,
+        health: 3,
+        bullets: 3,
+        status: :active,
+        has_treasure: false,
+        visited_cells: MapSet.new([{0, 0}]),
+        rel_x: 0,
+        rel_y: 0,
+        visited_rel_cells: MapSet.new([{0, 0}]),
+        discovered_rel_features: %{}
+      }
+
+      game = %{game | treasure: {5, 5}, pits: [], teleporters: [], walls: MapSet.new()}
+
+      {final_pos, result, _msg, _player} = Landing.resolve(game, player, {1, 0}, {1, 0})
+      assert final_pos == {1, 0}
+      assert result == "moved"
+    end
+
+    test "resolve grabs treasure when landing on the treasure cell" do
+      game = Engine.new_game("Landing Treasure Test", width: 6, height: 6)
+
+      player = %{
+        id: "p1",
+        name: "Explorer",
+        is_bot: false,
+        x: 0,
+        y: 0,
+        health: 3,
+        bullets: 3,
+        status: :active,
+        has_treasure: false,
+        visited_cells: MapSet.new([{0, 0}]),
+        rel_x: 0,
+        rel_y: 0,
+        visited_rel_cells: MapSet.new([{0, 0}]),
+        discovered_rel_features: %{}
+      }
+
+      game = %{
+        game
+        | treasure: {1, 0},
+          hospital: {5, 5},
+          arsenal: {4, 5},
+          pits: [],
+          teleporters: [],
+          walls: MapSet.new()
+      }
+
+      {_final_pos, result, msg, updated_player} = Landing.resolve(game, player, {1, 0}, {1, 0})
+      assert result == "treasure"
+      assert updated_player.has_treasure == true
+      assert String.contains?(msg, "FOUND THE TREASURE")
+    end
+
+    test "resolve stuns a player landing on a pit" do
+      game = Engine.new_game("Landing Pit Test", width: 6, height: 6)
+
+      player = %{
+        id: "p1",
+        name: "Explorer",
+        is_bot: false,
+        x: 0,
+        y: 0,
+        health: 3,
+        bullets: 3,
+        status: :active,
+        has_treasure: false,
+        items: MapSet.new(),
+        visited_cells: MapSet.new([{0, 0}]),
+        rel_x: 0,
+        rel_y: 0,
+        visited_rel_cells: MapSet.new([{0, 0}]),
+        discovered_rel_features: %{}
+      }
+
+      game = %{game | treasure: {5, 5}, pits: [{1, 0}], teleporters: [], walls: MapSet.new()}
+
+      {_final_pos, result, _msg, updated_player} = Landing.resolve(game, player, {1, 0}, {1, 0})
+      assert result == "pit"
+      assert updated_player.status == :stunned
     end
   end
 

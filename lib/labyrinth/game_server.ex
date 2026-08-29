@@ -128,6 +128,7 @@ defmodule Labyrinth.GameServer do
             exit: map_data.exit,
             treasure: map_data.treasure,
             minotaur: map_data.minotaur,
+            minotaur_unseen: Map.get(map_data, :minotaur_unseen, 0),
             pits: map_data.pits,
             teleporters: map_data.teleporters,
             walls: map_data.walls,
@@ -305,27 +306,8 @@ defmodule Labyrinth.GameServer do
   end
 
   defp async_record_turn(game_id, turn_number, player_id, summary) do
-    turn_attrs = %{
-      game_id: game_id,
-      turn_number: turn_number,
-      player_id: player_id,
-      player_name: summary.player_name,
-      action_type: summary.action_type,
-      direction: summary.direction,
-      result: summary.result,
-      sound_effects: summary.sound_effects,
-      position_before: %{
-        "x" => elem(summary.pos_before, 0),
-        "y" => elem(summary.pos_before, 1)
-      },
-      position_after: %{
-        "x" => elem(summary.pos_after, 0),
-        "y" => elem(summary.pos_after, 1)
-      }
-    }
-
     start_async_db_task(fn ->
-      Games.record_turn(turn_attrs)
+      Games.record_turn(game_id, turn_number, player_id, summary)
     end)
   end
 
@@ -351,6 +333,7 @@ defmodule Labyrinth.GameServer do
       "hospital" => tuple_to_map(engine.hospital),
       "arsenal" => tuple_to_map(engine.arsenal),
       "minotaur" => tuple_to_map(engine.minotaur),
+      "minotaur_unseen" => Map.get(engine, :minotaur_unseen, 0),
       "pits" => Enum.map(engine.pits, &tuple_to_map/1),
       "teleporters" =>
         Enum.map(engine.teleporters, fn {p1, p2} ->
@@ -383,6 +366,7 @@ defmodule Labyrinth.GameServer do
             %{"x" => div(data["width"] || 10, 2) + 1, "y" => div(data["height"] || 10, 2)}
         ),
       minotaur: map_to_tuple(data["minotaur"]),
+      minotaur_unseen: Map.get(data, "minotaur_unseen", 0),
       pits: Enum.map(data["pits"] || [], &map_to_tuple/1),
       teleporters:
         Enum.map(data["teleporters"] || [], fn t ->

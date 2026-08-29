@@ -16,6 +16,7 @@ defmodule Labyrinth.Game.Engine do
     :hospital,
     :arsenal,
     :minotaur,
+    :minotaur_unseen,
     :pits,
     :teleporters,
     :walls,
@@ -35,10 +36,42 @@ defmodule Labyrinth.Game.Engine do
   ]
 
   alias Labyrinth.Game.Generator
+  alias Labyrinth.Game.Engine.{Combat, Landing}
   alias Labyrinth.MapUtils
 
   @type direction :: :north | :south | :east | :west
+  @type action :: {:move, direction()} | {:shoot, direction()} | {:grenade, direction()} | :pass
+  @type player_status :: :active | :wounded | :stunned | :eliminated | :escaped
+  @type game_status :: :lobby | :in_progress | :finished
 
+  @type t :: %__MODULE__{
+          id: binary() | nil,
+          name: binary() | nil,
+          width: integer() | nil,
+          height: integer() | nil,
+          entrance: MapUtils.point() | nil,
+          exit: MapUtils.point() | nil,
+          treasure: MapUtils.point() | nil,
+          hospital: MapUtils.point() | nil,
+          arsenal: MapUtils.point() | nil,
+          minotaur: MapUtils.point() | nil,
+          minotaur_unseen: non_neg_integer() | nil,
+          pits: [MapUtils.point()] | nil,
+          teleporters: [{MapUtils.point(), MapUtils.point()}] | nil,
+          walls: MapSet.t(MapUtils.wall_pair()) | nil,
+          destroyed_walls: MapSet.t(MapUtils.wall_pair()) | nil,
+          players: [map()] | nil,
+          turn_index: non_neg_integer() | nil,
+          round_number: pos_integer() | nil,
+          status: game_status() | nil,
+          winner_name: binary() | nil,
+          last_action_result: map() | nil,
+          log_entries: [binary()] | nil,
+          settings: map() | nil,
+          turn_counter: non_neg_integer() | nil
+        }
+
+  @spec new_game(binary(), Keyword.t()) :: t()
   def new_game(name, opts \\ []) do
     {:ok, map_data} = Generator.generate_map(opts)
     minotaur_enabled? = Keyword.get(opts, :minotaur_enabled, true)
@@ -55,6 +88,7 @@ defmodule Labyrinth.Game.Engine do
       hospital: map_data.hospital,
       arsenal: map_data.arsenal,
       minotaur: if(minotaur_enabled?, do: map_data.minotaur, else: nil),
+      minotaur_unseen: 0,
       pits: map_data.pits,
       teleporters: map_data.teleporters,
       walls: parse_walls(map_data.walls),
@@ -73,6 +107,7 @@ defmodule Labyrinth.Game.Engine do
     }
   end
 
+  @spec add_player(t(), binary(), binary(), boolean()) :: t()
   def add_player(game, player_id, name, is_bot \\ false) do
     if Enum.any?(game.players, fn p -> p.id == player_id end) do
       game
@@ -117,6 +152,7 @@ defmodule Labyrinth.Game.Engine do
     end
   end
 
+  @spec reset_bot_rel_tracking(t(), binary()) :: t()
   def reset_bot_rel_tracking(game, bot_id) do
     bot = Enum.find(game.players, fn p -> p.id == bot_id end)
 
@@ -136,21 +172,22 @@ defmodule Labyrinth.Game.Engine do
     end
   end
 
+  @spec start_game(t()) :: t()
   def start_game(%__MODULE__{status: :lobby} = game) do
     if length(game.players) >= 1 do
       teleport_cells =
         (game.teleporters || [])
         |> Enum.flat_map(fn
-          {p1, p2} -> [parse_point(p1), parse_point(p2)]
-          [p1, p2] -> [parse_point(p1), parse_point(p2)]
-          %{"p1" => p1, "p2" => p2} -> [parse_point(p1), parse_point(p2)]
+          {p1, p2} -> [MapUtils.parse_point(p1), MapUtils.parse_point(p2)]
+          [p1, p2] -> [MapUtils.parse_point(p1), MapUtils.parse_point(p2)]
+          %{"p1" => p1, "p2" => p2} -> [MapUtils.parse_point(p1), MapUtils.parse_point(p2)]
           _ -> []
         end)
         |> MapSet.new()
 
       pit_cells =
         (game.pits || [])
-        |> Enum.map(&parse_point/1)
+        |> Enum.map(&MapUtils.parse_point/1)
         |> MapSet.new()
 
       forbidden_cells =
@@ -159,9 +196,9 @@ defmodule Labyrinth.Game.Engine do
           pit_cells,
           MapSet.new(
             [
-              parse_point(game.exit),
-              parse_point(game.treasure),
-              parse_point(game.minotaur)
+              MapUtils.parse_point(game.exit),
+              MapUtils.parse_point(game.treasure),
+              MapUtils.parse_point(game.minotaur)
             ]
             |> Enum.reject(&is_nil/1)
           )
@@ -217,6 +254,7 @@ defmodule Labyrinth.Game.Engine do
 
   def start_game(game), do: game
 
+  @spec current_player(t()) :: map() | nil
   def current_player(%__MODULE__{players: []}), do: nil
 
   def current_player(%__MODULE__{players: players, turn_index: idx}) do
@@ -228,6 +266,8 @@ defmodule Labyrinth.Game.Engine do
   Action: {:move, dir}, {:shoot, dir}, or :pass
   Returns {updated_game, turn_summary}
   """
+  @spec process_turn(t(), binary(), action()) ::
+          {:ok, t(), map()} | {:error, atom()}
   def process_turn(%__MODULE__{status: :in_progress} = game, player_id, action) do
     player = current_player(game)
 
@@ -268,15 +308,15 @@ defmodule Labyrinth.Game.Engine do
 
   defp execute_action(game, player, {:move, dir}) when dir in [:north, :south, :east, :west] do
     pos_before = {player.x, player.y}
-    target_pos = neighbor_in_dir(pos_before, dir)
+    target_pos = MapUtils.neighbor_in_dir(pos_before, dir)
 
     wall_blocked? =
-      is_out_of_bounds(target_pos, game.width, game.height) or
+      MapUtils.out_of_bounds?(target_pos, game.width, game.height) or
         has_wall?(game.walls, pos_before, target_pos)
 
     rx = Map.get(player, :rel_x, 0)
     ry = Map.get(player, :rel_y, 0)
-    {dx, dy} = dir_delta(dir)
+    {dx, dy} = MapUtils.dir_delta(dir)
     target_rx = rx + dx
     target_ry = ry + dy
 
@@ -315,7 +355,7 @@ defmodule Labyrinth.Game.Engine do
     else
       # Clear move
       {final_pos, move_result, special_msg, updated_player} =
-        resolve_cell_landing(game, player, target_pos, {target_rx, target_ry})
+        Landing.resolve(game, player, target_pos, {target_rx, target_ry})
 
       game_updated = update_player_in_game(game, updated_player)
 
@@ -361,7 +401,7 @@ defmodule Labyrinth.Game.Engine do
 
       # Projectile raycast up to 3 cells
       {hit_result, hit_msg, hit_player_id} =
-        trace_shot(game_updated, pos_before, dir, 3, player.id)
+        Combat.trace_shot(game_updated, pos_before, dir, 3, player.id)
 
       game_after_hit =
         case hit_player_id do
@@ -372,7 +412,7 @@ defmodule Labyrinth.Game.Engine do
             game_updated
 
           p_id ->
-            apply_shot_damage(game_updated, p_id)
+            Combat.apply_shot_damage(game_updated, p_id)
         end
 
       sound_echoes = calculate_sound_echoes(game_after_hit, updated_player, :shoot, dir)
@@ -411,11 +451,11 @@ defmodule Labyrinth.Game.Engine do
 
       {game, summary}
     else
-      target_pos = neighbor_in_dir(pos_before, dir)
+      target_pos = MapUtils.neighbor_in_dir(pos_before, dir)
       wall_pair = MapUtils.normalize_wall(pos_before, target_pos)
 
       # Check if wall is outer perimeter of the whole labyrinth
-      outer_boundary? = is_out_of_bounds(target_pos, game.width, game.height)
+      outer_boundary? = MapUtils.out_of_bounds?(target_pos, game.width, game.height)
 
       updated_player = %{player | grenades: max(0, Map.get(player, :grenades, 3) - 1)}
 
@@ -505,196 +545,6 @@ defmodule Labyrinth.Game.Engine do
     {game, summary}
   end
 
-  defp resolve_cell_landing(game, player, target_pos, target_rel_pos) do
-    visited = MapSet.put(player.visited_cells, target_pos)
-
-    {rx, ry} = target_rel_pos
-    rel_visited = MapSet.put(Map.get(player, :visited_rel_cells, MapSet.new()), {rx, ry})
-    rel_feats = Map.get(player, :discovered_rel_features, %{})
-
-    treasure_grabbed? =
-      parse_point(target_pos) == parse_point(game.treasure) and not player.has_treasure
-
-    base_player = %{
-      player
-      | x: elem(target_pos, 0),
-        y: elem(target_pos, 1),
-        visited_cells: visited,
-        rel_x: rx,
-        rel_y: ry,
-        visited_rel_cells: rel_visited,
-        has_treasure: player.has_treasure or treasure_grabbed?
-    }
-
-    t_prefix = if treasure_grabbed?, do: "💎 #{player.name} GRABBED THE TREASURE! ", else: ""
-
-    cond do
-      has_pit?(game.pits, target_pos) ->
-        resolve_pit_landing(base_player, target_pos, {rx, ry}, rel_feats, t_prefix)
-
-      has_teleport?(game.teleporters, target_pos) ->
-        resolve_teleport_landing(
-          game,
-          base_player,
-          target_pos,
-          {rx, ry},
-          visited,
-          rel_feats,
-          t_prefix
-        )
-
-      target_pos == game.hospital ->
-        resolve_hospital_landing(base_player, target_pos, {rx, ry}, rel_feats, t_prefix)
-
-      target_pos == game.arsenal ->
-        resolve_arsenal_landing(base_player, target_pos, {rx, ry}, rel_feats, t_prefix)
-
-      target_pos == game.exit and base_player.has_treasure ->
-        resolve_exit_landing(base_player, target_pos, {rx, ry}, rel_feats)
-
-      treasure_grabbed? ->
-        resolve_treasure_landing(base_player, target_pos, {rx, ry}, rel_feats)
-
-      true ->
-        {target_pos, "moved", "#{player.name} moved 1 cell.", base_player}
-    end
-  end
-
-  defp resolve_pit_landing(base_player, target_pos, {rx, ry}, rel_feats, t_prefix) do
-    updated_rel_feats = Map.put(rel_feats, {rx, ry}, "pit")
-    player_items = Map.get(base_player, :items, MapSet.new())
-
-    if MapSet.member?(player_items, :rope) do
-      updated_items = MapSet.delete(player_items, :rope)
-
-      updated_player = %{
-        base_player
-        | items: updated_items,
-          discovered_rel_features: updated_rel_feats
-      }
-
-      msg =
-        "#{t_prefix}🪢 #{base_player.name} fell into a Pit but used a Rope to climb out safely!"
-
-      {target_pos, "pit_escaped", msg, updated_player}
-    else
-      updated_player = %{
-        base_player
-        | status: :stunned,
-          discovered_rel_features: updated_rel_feats
-      }
-
-      msg = "#{t_prefix}#{base_player.name} fell into a Pit trap! (Loses next turn)"
-      {target_pos, "pit", msg, updated_player}
-    end
-  end
-
-  defp resolve_teleport_landing(
-         game,
-         base_player,
-         target_pos,
-         {rx, ry},
-         visited,
-         rel_feats,
-         t_prefix
-       ) do
-    destination = get_teleport_dest(game.teleporters, target_pos)
-    teleport_visited = MapSet.put(visited, destination)
-    updated_rel_feats = Map.put(rel_feats, {rx, ry}, "teleport")
-
-    dest_grabbed? =
-      parse_point(destination) == parse_point(game.treasure) and not base_player.has_treasure
-
-    updated_player = %{
-      base_player
-      | x: elem(destination, 0),
-        y: elem(destination, 1),
-        visited_cells: teleport_visited,
-        discovered_rel_features: updated_rel_feats,
-        has_treasure: base_player.has_treasure or dest_grabbed?
-    }
-
-    warp_prefix = if dest_grabbed?, do: "💎 GRABBED TREASURE AT WARP DESTINATION! ", else: ""
-
-    msg =
-      "#{t_prefix}#{warp_prefix}#{base_player.name} stepped on a Teleporter and was warped to #{inspect(destination)}!"
-
-    {destination, "teleport", msg, updated_player}
-  end
-
-  defp resolve_hospital_landing(base_player, target_pos, {rx, ry}, rel_feats, t_prefix) do
-    updated_rel_feats = Map.put(rel_feats, {rx, ry}, "hospital")
-
-    {updated_player, msg} =
-      if base_player.status == :wounded or base_player.health < 3 do
-        p_healed = %{
-          base_player
-          | health: 3,
-            status: :active,
-            discovered_rel_features: updated_rel_feats
-        }
-
-        {p_healed,
-         "🏥 #{base_player.name} visited the Hospital! Fully healed back to 3 HP (Healthy)!"}
-      else
-        p_with_feat = %{base_player | discovered_rel_features: updated_rel_feats}
-        {p_with_feat, "🏥 #{base_player.name} visited the Hospital (already at full 3 HP)."}
-      end
-
-    {target_pos, "hospital", t_prefix <> msg, updated_player}
-  end
-
-  defp resolve_arsenal_landing(base_player, target_pos, {rx, ry}, rel_feats, t_prefix) do
-    updated_rel_feats = Map.put(rel_feats, {rx, ry}, "arsenal")
-    curr_items = Map.get(base_player, :items, MapSet.new())
-    has_rope? = MapSet.member?(curr_items, :rope)
-    new_items = MapSet.put(curr_items, :rope)
-
-    {updated_player, msg} =
-      if base_player.bullets < 3 or Map.get(base_player, :grenades, 3) < 3 or not has_rope? do
-        p_reloaded = %{
-          base_player
-          | bullets: 3,
-            grenades: 3,
-            items: new_items,
-            discovered_rel_features: updated_rel_feats
-        }
-
-        rope_msg = if not has_rope?, do: " and picked up a Rope 🪢!", else: "!"
-
-        {p_reloaded,
-         "⚔️ #{base_player.name} visited the Arsenal! Ammunition fully reloaded (3/3 💣🔫)#{rope_msg}"}
-      else
-        p_with_feat = %{base_player | discovered_rel_features: updated_rel_feats}
-
-        {p_with_feat,
-         "⚔️ #{base_player.name} visited the Arsenal (already fully loaded with ammo & Rope 🪢)."}
-      end
-
-    {target_pos, "arsenal", t_prefix <> msg, updated_player}
-  end
-
-  defp resolve_exit_landing(base_player, target_pos, {rx, ry}, rel_feats) do
-    updated_rel_feats = Map.put(rel_feats, {rx, ry}, "exit")
-
-    updated_player = %{
-      base_player
-      | status: :escaped,
-        discovered_rel_features: updated_rel_feats
-    }
-
-    {target_pos, "escaped", "🏆 #{base_player.name} ESCAPED THE LABYRINTH WITH THE TREASURE!",
-     updated_player}
-  end
-
-  defp resolve_treasure_landing(base_player, target_pos, {rx, ry}, rel_feats) do
-    updated_rel_feats = Map.put(rel_feats, {rx, ry}, "treasure")
-    updated_player = %{base_player | discovered_rel_features: updated_rel_feats}
-
-    {target_pos, "treasure", "💎 #{base_player.name} FOUND THE TREASURE! Now escape to the Exit!",
-     updated_player}
-  end
-
   defp advance_turn(game, turn_summary) do
     is_bot = String.starts_with?(turn_summary.player_id || "", "bot")
     icon = if is_bot, do: "🤖", else: "👤"
@@ -723,7 +573,7 @@ defmodule Labyrinth.Game.Engine do
 
     stink_log =
       if active_player && game.minotaur && active_player.status in [:active, :wounded] do
-        {mx, my} = parse_point(game.minotaur)
+        {mx, my} = MapUtils.parse_point(game.minotaur)
 
         if abs(active_player.x - mx) + abs(active_player.y - my) <= 2 do
           "🦨 #{active_player.name} smelled the Minotaur's foul stink wafting from nearby! (Within 2 cells)"
@@ -831,7 +681,7 @@ defmodule Labyrinth.Game.Engine do
         nearest_player = Enum.min_by(active_players, fn p -> abs(p.x - mx) + abs(p.y - my) end)
         dist = abs(nearest_player.x - mx) + abs(nearest_player.y - my)
 
-        unseen_count = Map.get(game.settings || %{}, "minotaur_unseen", 0)
+        unseen_count = Map.get(game, :minotaur_unseen, 0)
         unseen_count = if dist > 3, do: unseen_count + 1, else: 0
         sprint? = unseen_count >= 3
 
@@ -857,8 +707,7 @@ defmodule Labyrinth.Game.Engine do
             {next_pos, g_acc}
           end)
 
-        updated_settings = Map.put(game.settings || %{}, "minotaur_unseen", unseen_count)
-        game_updated = %{game | minotaur: final_mpos, settings: updated_settings}
+        game_updated = %{game | minotaur: final_mpos, minotaur_unseen: unseen_count}
 
         victims =
           Enum.filter(game_updated.players, fn p ->
@@ -867,7 +716,7 @@ defmodule Labyrinth.Game.Engine do
 
         {game_after_hits, hit_msgs} =
           Enum.reduce(victims, {game_updated, []}, fn victim, {g_acc, msg_acc} ->
-            g_updated = apply_shot_damage(g_acc, victim.id)
+            g_updated = Combat.apply_shot_damage(g_acc, victim.id)
             v_after = Enum.find(g_updated.players, fn p -> p.id == victim.id end)
 
             msg =
@@ -901,7 +750,7 @@ defmodule Labyrinth.Game.Engine do
       dist = abs(p.x - elem(pos, 0)) + abs(p.y - elem(pos, 1))
 
       if dist <= 3 do
-        cardinal_rel = relative_direction({p.x, p.y}, pos)
+        cardinal_rel = MapUtils.relative_direction({p.x, p.y}, pos)
         sound_type = if action_type == :shoot, do: "A gunshot echoed", else: "Footsteps heard"
         ["Player #{p.name}: #{sound_type} from #{cardinal_rel}"]
       else
@@ -910,168 +759,11 @@ defmodule Labyrinth.Game.Engine do
     end)
   end
 
-  defp trace_shot(game, {sx, sy}, dir, max_range, shooter_id) do
-    {dx, dy} = dir_delta(dir)
-
-    Enum.reduce_while(
-      1..max_range,
-      {"shot_miss", "Gunshot fired #{dir} into empty corridor.", nil},
-      fn dist, _acc ->
-        curr = {sx + dx * (dist - 1), sy + dy * (dist - 1)}
-        nxt = {sx + dx * dist, sy + dy * dist}
-
-        if is_out_of_bounds(nxt, game.width, game.height) or has_wall?(game.walls, curr, nxt) do
-          shooter = Enum.find(game.players, fn p -> p.id == shooter_id end)
-          shooter_name = if shooter, do: shooter.name, else: "the shooter"
-
-          {:halt,
-           {"shot_ricochet",
-            "💥 Gunshot fired #{dir} hit a wall and RICOCHETED, self-wounding #{shooter_name}! (-1 HP)",
-            shooter_id}}
-        else
-          minotaur_hit? = game.minotaur != nil and game.minotaur == nxt
-
-          target_player =
-            Enum.find(game.players, fn p ->
-              {p.x, p.y} == nxt and p.status in [:active, :wounded, :stunned]
-            end)
-
-          cond do
-            minotaur_hit? ->
-              {:halt,
-               {"shot_hit_minotaur", "🎯 BOOM! Gunshot HIT and KILLED the Minotaur 👹!", :minotaur}}
-
-            target_player != nil ->
-              {:halt, {"shot_hit", "🎯 Gunshot hit #{target_player.name}!", target_player.id}}
-
-            true ->
-              {:cont, {"shot_miss", "Gunshot fired #{dir} into empty corridor.", nil}}
-          end
-        end
-      end
-    )
-  end
-
-  defp apply_shot_damage(game, player_id) do
-    player = Enum.find(game.players, fn p -> p.id == player_id end)
-
-    if player != nil do
-      new_hp = max(0, player.health - 1)
-
-      updated_player =
-        cond do
-          new_hp <= 0 ->
-            %{player | health: 0, status: :eliminated, has_treasure: false}
-
-          new_hp in [1, 2] ->
-            %{player | health: new_hp, status: :wounded, has_treasure: false}
-
-          true ->
-            %{player | health: new_hp}
-        end
-
-      game_updated = update_player_in_game(game, updated_player)
-
-      # Drop treasure if player was carrying it when shot
-      if player.has_treasure do
-        drop_pos = {player.x, player.y}
-
-        msg =
-          "💎 #{player.name} got shot and DROPPED THE TREASURE at (#{elem(drop_pos, 0)}, #{elem(drop_pos, 1)})!"
-
-        %{game_updated | treasure: drop_pos, log_entries: [msg | game_updated.log_entries]}
-      else
-        game_updated
-      end
-    else
-      game
-    end
-  end
-
   defp update_player_in_game(game, updated_player) do
     updated_players =
       Enum.map(game.players, fn p -> if p.id == updated_player.id, do: updated_player, else: p end)
 
     %{game | players: updated_players}
-  end
-
-  defp neighbor_in_dir({x, y}, :north), do: {x, y - 1}
-  defp neighbor_in_dir({x, y}, :south), do: {x, y + 1}
-  defp neighbor_in_dir({x, y}, :east), do: {x + 1, y}
-  defp neighbor_in_dir({x, y}, :west), do: {x - 1, y}
-
-  defp dir_delta(:north), do: {0, -1}
-  defp dir_delta(:south), do: {0, 1}
-  defp dir_delta(:east), do: {1, 0}
-  defp dir_delta(:west), do: {-1, 0}
-
-  defp relative_direction({from_x, from_y}, {to_x, to_y}) do
-    dx = to_x - from_x
-    dy = to_y - from_y
-
-    cond do
-      abs(dy) >= abs(dx) and dy < 0 -> "North"
-      abs(dy) >= abs(dx) and dy > 0 -> "South"
-      abs(dx) > abs(dy) and dx > 0 -> "East"
-      true -> "West"
-    end
-  end
-
-  defp is_out_of_bounds({x, y}, w, h), do: x < 0 or x >= w or y < 0 or y >= h
-
-  defp parse_point({x, y}), do: {x, y}
-  defp parse_point(%{"x" => x, "y" => y}), do: {x, y}
-  defp parse_point([x, y]), do: {x, y}
-  defp parse_point(_), do: nil
-
-  defp has_pit?(pits, pos) do
-    Enum.any?(pits || [], fn p -> parse_point(p) == pos end)
-  end
-
-  defp has_teleport?(teleporters, pos) do
-    Enum.any?(teleporters || [], fn
-      {p1, p2} -> parse_point(p1) == pos or parse_point(p2) == pos
-      [p1, p2] -> parse_point(p1) == pos or parse_point(p2) == pos
-      %{"p1" => p1, "p2" => p2} -> parse_point(p1) == pos or parse_point(p2) == pos
-      _ -> false
-    end)
-  end
-
-  defp get_teleport_dest(teleporters, pos) do
-    Enum.find_value(teleporters || [], pos, fn
-      {p1, p2} ->
-        tp1 = parse_point(p1)
-        tp2 = parse_point(p2)
-
-        cond do
-          tp1 == pos -> tp2
-          tp2 == pos -> tp1
-          true -> nil
-        end
-
-      [p1, p2] ->
-        tp1 = parse_point(p1)
-        tp2 = parse_point(p2)
-
-        cond do
-          tp1 == pos -> tp2
-          tp2 == pos -> tp1
-          true -> nil
-        end
-
-      %{"p1" => p1, "p2" => p2} ->
-        tp1 = parse_point(p1)
-        tp2 = parse_point(p2)
-
-        cond do
-          tp1 == pos -> tp2
-          tp2 == pos -> tp1
-          true -> nil
-        end
-
-      _ ->
-        nil
-    end)
   end
 
   defp has_wall?(walls, p1, p2) do

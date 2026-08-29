@@ -156,4 +156,75 @@ defmodule Labyrinth.GamesAuthzTest do
       assert {:ok, _} = GameServer.add_player(game_id, "p1", "Player 1")
     end
   end
+
+  describe "get_db_game/1" do
+    test "returns nil for malformed (non-UUID) game IDs instead of raising" do
+      assert Games.get_db_game("not-a-valid-uuid") == nil
+      assert Games.get_db_game("") == nil
+      assert Games.get_db_game(nil) == nil
+      assert Games.get_db_game(12345) == nil
+    end
+
+    test "returns nil for a valid UUID that does not exist" do
+      assert Games.get_db_game(Ecto.UUID.generate()) == nil
+    end
+
+    test "returns the game for a valid existing UUID" do
+      game_id = create_test_game()
+      assert %Labyrinth.Schema.Game{} = Games.get_db_game(game_id)
+    end
+  end
+
+  describe "build_turn_attrs/4" do
+    test "builds turn attributes from an engine summary" do
+      game_id = Ecto.UUID.generate()
+
+      summary = %{
+        player_id: "p1",
+        player_name: "Alice",
+        action_type: "move",
+        direction: "east",
+        result: "moved",
+        sound_effects: ["Footsteps heard from South"],
+        pos_before: {1, 2},
+        pos_after: {2, 2}
+      }
+
+      attrs = Games.build_turn_attrs(game_id, 7, "p1", summary)
+
+      assert attrs.game_id == game_id
+      assert attrs.turn_number == 7
+      assert attrs.player_id == "p1"
+      assert attrs.player_name == "Alice"
+      assert attrs.action_type == "move"
+      assert attrs.direction == "east"
+      assert attrs.result == "moved"
+      assert attrs.sound_effects == ["Footsteps heard from South"]
+      assert attrs.position_before == %{"x" => 1, "y" => 2}
+      assert attrs.position_after == %{"x" => 2, "y" => 2}
+    end
+  end
+
+  describe "record_turn/4" do
+    test "persists a turn from an engine summary" do
+      game_id = create_test_game()
+
+      summary = %{
+        player_id: "p1",
+        player_name: "Alice",
+        action_type: "move",
+        direction: "east",
+        result: "moved",
+        sound_effects: [],
+        pos_before: {1, 2},
+        pos_after: {2, 2}
+      }
+
+      assert {:ok, turn} = Games.record_turn(game_id, 1, "p1", summary)
+      assert turn.game_id == game_id
+      assert turn.turn_number == 1
+      assert turn.player_name == "Alice"
+      assert turn.position_after == %{"x" => 2, "y" => 2}
+    end
+  end
 end

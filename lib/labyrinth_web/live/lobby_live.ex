@@ -3,6 +3,7 @@ defmodule LabyrinthWeb.LobbyLive do
 
   alias Labyrinth.Games
   alias Labyrinth.GameSupervisor
+  alias Labyrinth.Game.Params
   alias Labyrinth.Prolog.Validator
 
   @impl true
@@ -23,7 +24,14 @@ defmodule LabyrinthWeb.LobbyLive do
 
   @impl true
   def handle_event("select_tab", %{"tab" => tab_str}, socket) do
-    tab = String.to_existing_atom(tab_str)
+    tab =
+      case tab_str do
+        "active" -> :active
+        "stale" -> :stale
+        "finished" -> :finished
+        _ -> :active
+      end
+
     {:noreply, fetch_and_stream_games(socket, tab, 1)}
   end
 
@@ -49,19 +57,15 @@ defmodule LabyrinthWeb.LobbyLive do
 
   @impl true
   def handle_event("validate_prolog", params, socket) do
-    width = String.to_integer(params["width"] || "10")
-    height = String.to_integer(params["height"] || "10")
-    pit_count = String.to_integer(params["pit_count"] || "3")
-    teleport_count = String.to_integer(params["teleport_count"] || "1")
-    wall_density = String.to_integer(params["wall_density"] || "70")
+    opts = Params.parse(params)
 
     {:ok, map_data} =
       Labyrinth.Game.Generator.generate_map(
-        width: width,
-        height: height,
-        pit_count: pit_count,
-        teleport_count: teleport_count,
-        wall_density: wall_density
+        width: opts[:width],
+        height: opts[:height],
+        pit_count: opts[:pit_count],
+        teleport_count: opts[:teleport_count],
+        wall_density: opts[:wall_density]
       )
 
     case Validator.validate_map(map_data) do
@@ -78,29 +82,23 @@ defmodule LabyrinthWeb.LobbyLive do
 
   @impl true
   def handle_event("create_game", %{"game" => params}, socket) do
+    opts = Params.parse(params)
     name = params["name"]
-    width = String.to_integer(params["width"] || "10")
-    height = String.to_integer(params["height"] || "10")
-    bot_count = String.to_integer(params["bot_count"] || "1")
-    pit_count = String.to_integer(params["pit_count"] || "3")
-    teleport_count = String.to_integer(params["teleport_count"] || "1")
-    wall_density = String.to_integer(params["wall_density"] || "70")
     minotaur_enabled = Map.get(params, "minotaur_enabled", "true") in ["true", true]
-    difficulty = String.to_atom(params["difficulty"] || "normal")
 
     game_id = Ecto.UUID.generate()
 
     case GameSupervisor.start_game(
            game_id: game_id,
            name: name,
-           width: width,
-           height: height,
-           bot_count: bot_count,
-           pit_count: pit_count,
-           teleport_count: teleport_count,
-           wall_density: wall_density,
+           width: opts[:width],
+           height: opts[:height],
+           bot_count: opts[:bot_count],
+           pit_count: opts[:pit_count],
+           teleport_count: opts[:teleport_count],
+           wall_density: opts[:wall_density],
            minotaur_enabled: minotaur_enabled,
-           difficulty: difficulty
+           difficulty: opts[:difficulty]
          ) do
       {:ok, _pid} ->
         Phoenix.PubSub.broadcast(Labyrinth.PubSub, "lobby", :game_created)

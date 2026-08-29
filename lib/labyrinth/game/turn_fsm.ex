@@ -84,25 +84,13 @@ defmodule Labyrinth.Game.TurnFSM do
 
         case Engine.process_turn(engine, curr.id, action) do
           {%Engine{} = updated_engine, summary} ->
-            # Record turn in DB
-            Labyrinth.Games.record_turn(%{
-              game_id: updated_engine.id,
-              turn_number: length(Labyrinth.Games.list_turns_for_game(updated_engine.id)) + 1,
-              player_id: curr.id,
-              player_name: summary.player_name,
-              action_type: summary.action_type,
-              direction: summary.direction,
-              result: summary.result,
-              sound_effects: summary.sound_effects,
-              position_before: %{
-                "x" => elem(summary.pos_before, 0),
-                "y" => elem(summary.pos_before, 1)
-              },
-              position_after: %{
-                "x" => elem(summary.pos_after, 0),
-                "y" => elem(summary.pos_after, 1)
-              }
-            })
+            # Record turn in DB using the engine's monotonic turn counter
+            Labyrinth.Games.record_turn(
+              updated_engine.id,
+              updated_engine.turn_counter || 1,
+              curr.id,
+              summary
+            )
 
             if updated_engine.status == :finished do
               Labyrinth.Games.update_game_status(

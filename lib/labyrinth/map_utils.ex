@@ -98,4 +98,58 @@ defmodule Labyrinth.MapUtils do
   def manhattan_distance({x1, y1}, {x2, y2}) do
     abs(x1 - x2) + abs(y1 - y2)
   end
+
+  @doc """
+  Returns the neighbor position in a cardinal direction.
+  """
+  @spec neighbor_in_dir(point(), atom()) :: point()
+  def neighbor_in_dir({x, y}, :north), do: {x, y - 1}
+  def neighbor_in_dir({x, y}, :south), do: {x, y + 1}
+  def neighbor_in_dir({x, y}, :east), do: {x + 1, y}
+  def neighbor_in_dir({x, y}, :west), do: {x - 1, y}
+
+  @doc """
+  Returns the (dx, dy) delta for a cardinal direction atom.
+  """
+  @spec dir_delta(atom()) :: {integer(), integer()}
+  def dir_delta(:north), do: {0, -1}
+  def dir_delta(:south), do: {0, 1}
+  def dir_delta(:east), do: {1, 0}
+  def dir_delta(:west), do: {-1, 0}
+
+  @doc """
+  Checks if a coordinate point is outside the grid boundaries.
+  """
+  @spec out_of_bounds?(point(), integer(), integer()) :: boolean()
+  def out_of_bounds?({x, y}, width, height) do
+    x < 0 or x >= width or y < 0 or y >= height
+  end
+
+  @doc """
+  Normalizes a coordinate into a `{x, y}` tuple.
+  Accepts tuple, map with `x`/`y` keys, or 2-element list. Returns `nil` for
+  unrecognized input.
+  """
+  @spec parse_point(any()) :: point() | nil
+  def parse_point({x, y}), do: {x, y}
+  def parse_point(%{"x" => x, "y" => y}), do: {x, y}
+  def parse_point([x, y]), do: {x, y}
+  def parse_point(_), do: nil
+
+  @doc """
+  Returns the cardinal direction string from a source point to a target point.
+  Used for spatial auditory feedback ("Footsteps heard from South").
+  """
+  @spec relative_direction(point(), point()) :: String.t()
+  def relative_direction({from_x, from_y}, {to_x, to_y}) do
+    dx = to_x - from_x
+    dy = to_y - from_y
+
+    cond do
+      abs(dy) >= abs(dx) and dy < 0 -> "North"
+      abs(dy) >= abs(dx) and dy > 0 -> "South"
+      abs(dx) > abs(dy) and dx > 0 -> "East"
+      true -> "West"
+    end
+  end
 end

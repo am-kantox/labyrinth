@@ -172,14 +172,14 @@ defmodule Labyrinth.Game.Generator do
 
         {spanning_walls, _sets} =
           Enum.reduce(shuffled_edges, {[], sets}, fn {p1, p2} = edge, {wall_acc, set_acc} ->
-            root1 = find_root(set_acc, p1)
-            root2 = find_root(set_acc, p2)
+            {root1, set_acc1} = find_root(set_acc, p1)
+            {root2, set_acc2} = find_root(set_acc1, p2)
 
             if root1 != root2 do
-              new_set_acc = Map.put(set_acc, root1, root2)
+              new_set_acc = Map.put(set_acc2, root1, root2)
               {wall_acc, new_set_acc}
             else
-              {[edge | wall_acc], set_acc}
+              {[edge | wall_acc], set_acc2}
             end
           end)
 
@@ -188,13 +188,18 @@ defmodule Labyrinth.Game.Generator do
     end
   end
 
+  @doc false
+  # Union-find `find` with full path compression. Returns `{root, sets}` where
+  # `sets` has every node along the search path re-parented directly to `root`,
+  # making subsequent lookups near O(1) instead of O(depth).
   defp find_root(sets, elem) do
     parent = Map.get(sets, elem, elem)
 
     if parent == elem do
-      elem
+      {elem, sets}
     else
-      find_root(sets, parent)
+      {root, sets} = find_root(sets, parent)
+      {root, Map.put(sets, elem, root)}
     end
   end
 
