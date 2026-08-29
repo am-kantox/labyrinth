@@ -868,8 +868,12 @@ defmodule LabyrinthWeb.GameLive do
               <% end %>
 
               <% treasure_holder = Enum.find(@engine.players, & &1.has_treasure) %>
+              <% show_treasure_got? =
+                treasure_holder != nil and
+                  Map.get(@engine, :treasure_grabbed_at_turn) != nil and
+                  Map.get(@engine, :treasure_grabbed_at_turn) == Map.get(@engine, :turn_counter) %>
               <%= cond do %>
-                <% treasure_holder != nil -> %>
+                <% show_treasure_got? -> %>
                   <div class="w-full bg-gradient-to-r from-blue-950 via-sky-900 to-blue-950 border-2 border-blue-500 rounded-xl p-4 mb-4 text-center shadow-2xl animate-pulse">
                     <div class="flex items-center justify-center gap-3 text-xl sm:text-2xl font-black text-blue-200 tracking-wider">
                       <span class="text-3xl animate-bounce">💎</span>
@@ -1084,7 +1088,7 @@ defmodule LabyrinthWeb.GameLive do
                             >
                               {if me.status == :wounded, do: "🩸🤠", else: "🤠"}
                             </span>
-                          <% active_players_here != [] -> %>
+                          <% active_players_here != [] and (is_in_sight or reveal_full_map?) -> %>
                             <% any_wounded? = Enum.any?(active_players_here, &(&1.status == :wounded)) %>
                             <% first_p = List.first(active_players_here) %>
                             <% p_theme =

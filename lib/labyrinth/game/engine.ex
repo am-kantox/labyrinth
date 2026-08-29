@@ -32,7 +32,8 @@ defmodule Labyrinth.Game.Engine do
     :last_action_result,
     :log_entries,
     :settings,
-    :turn_counter
+    :turn_counter,
+    :treasure_grabbed_at_turn
   ]
 
   alias Labyrinth.Game.Generator
@@ -68,7 +69,8 @@ defmodule Labyrinth.Game.Engine do
           last_action_result: map() | nil,
           log_entries: [binary()] | nil,
           settings: map() | nil,
-          turn_counter: non_neg_integer() | nil
+          turn_counter: non_neg_integer() | nil,
+          treasure_grabbed_at_turn: non_neg_integer() | nil
         }
 
   @spec new_game(binary(), Keyword.t()) :: t()
@@ -301,11 +303,14 @@ defmodule Labyrinth.Game.Engine do
             pos_after: {player.x, player.y}
           }
 
-          advance_turn(game_updated, summary)
+          advance_turn(game_updated, summary, false)
 
         status when status in [:active, :wounded] ->
+          had_treasure_before? = Enum.any?(game.players, & &1.has_treasure)
           {game_after_action, summary} = execute_action(game, player, action)
-          advance_turn(game_after_action, summary)
+          has_treasure_after? = Enum.any?(game_after_action.players, & &1.has_treasure)
+          treasure_grabbed_this_turn? = not had_treasure_before? and has_treasure_after?
+          advance_turn(game_after_action, summary, treasure_grabbed_this_turn?)
 
         _ ->
           {:error, :player_inactive}
@@ -554,7 +559,7 @@ defmodule Labyrinth.Game.Engine do
     {game, summary}
   end
 
-  defp advance_turn(game, turn_summary) do
+  defp advance_turn(game, turn_summary, treasure_grabbed_this_turn?) do
     is_bot = String.starts_with?(turn_summary.player_id || "", "bot")
     icon = if is_bot, do: "🤖", else: "👤"
     dir_str = if turn_summary.direction, do: String.upcase(turn_summary.direction), else: "PASS"
@@ -600,11 +605,19 @@ defmodule Labyrinth.Game.Engine do
     updated_logs = new_log_batch ++ game.log_entries
     turn_counter = (game.turn_counter || 0) + 1
 
+    treasure_grabbed_at_turn =
+      if treasure_grabbed_this_turn? do
+        turn_counter
+      else
+        game.treasure_grabbed_at_turn
+      end
+
     game = %{
       game
       | last_action_result: turn_summary,
         log_entries: updated_logs,
-        turn_counter: turn_counter
+        turn_counter: turn_counter,
+        treasure_grabbed_at_turn: treasure_grabbed_at_turn
     }
 
     # Check for game winner

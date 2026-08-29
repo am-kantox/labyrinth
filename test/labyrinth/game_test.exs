@@ -634,5 +634,49 @@ defmodule Labyrinth.GameTest do
       assert finished_game.winner_name == "Hero Explorer"
       assert summary.result == "escaped"
     end
+
+    test "records treasure_grabbed_at_turn when treasure is grabbed for 1 turn tracking" do
+      game = Engine.new_game("Treasure Grab Test", width: 6, height: 6)
+      game = Engine.add_player(game, "p1", "Player 1")
+      game = Engine.add_player(game, "p2", "Player 2")
+      game = Engine.start_game(game)
+
+      # Position p1 right next to treasure cell
+      {trs_x, trs_y} = game.treasure
+
+      {start_x, start_y, dir} =
+        cond do
+          trs_x > 0 -> {trs_x - 1, trs_y, :east}
+          trs_y > 0 -> {trs_x, trs_y - 1, :south}
+          true -> {trs_x + 1, trs_y, :west}
+        end
+
+      cleared_walls =
+        Enum.reject(game.walls, fn {p1_w, p2_w} ->
+          (p1_w == {start_x, start_y} and p2_w == {trs_x, trs_y}) or
+            (p2_w == {start_x, start_y} and p1_w == {trs_x, trs_y})
+        end)
+        |> MapSet.new()
+
+      p1 = Enum.find(game.players, &(&1.id == "p1"))
+      updated_p1 = %{p1 | x: start_x, y: start_y, has_treasure: false}
+      players = Enum.map(game.players, fn p -> if p.id == "p1", do: updated_p1, else: p end)
+
+      game_ready = %{game | players: players, walls: cleared_walls}
+
+      assert game_ready.treasure_grabbed_at_turn == nil
+
+      # Player 1 grabs treasure on turn 1
+      {game_after_grab, _summary} = Engine.process_turn(game_ready, "p1", {:move, dir})
+      assert game_after_grab.turn_counter == 1
+      assert game_after_grab.treasure_grabbed_at_turn == 1
+
+      # Player 2 takes turn 2
+      {game_turn_2, _summary2} = Engine.process_turn(game_after_grab, "p2", :pass)
+      assert game_turn_2.turn_counter == 2
+      # treasure_grabbed_at_turn remains 1, so turn_counter (2) != treasure_grabbed_at_turn (1)
+      assert game_turn_2.treasure_grabbed_at_turn == 1
+      assert game_turn_2.treasure_grabbed_at_turn != game_turn_2.turn_counter
+    end
   end
 end
