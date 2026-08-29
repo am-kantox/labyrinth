@@ -867,6 +867,33 @@ defmodule LabyrinthWeb.GameLive do
                 <% end %>
               <% end %>
 
+              <% treasure_holder = Enum.find(@engine.players, & &1.has_treasure) %>
+              <%= cond do %>
+                <% treasure_holder != nil -> %>
+                  <div class="w-full bg-gradient-to-r from-blue-950 via-sky-900 to-blue-950 border-2 border-blue-500 rounded-xl p-4 mb-4 text-center shadow-2xl animate-pulse">
+                    <div class="flex items-center justify-center gap-3 text-xl sm:text-2xl font-black text-blue-200 tracking-wider">
+                      <span class="text-3xl animate-bounce">💎</span>
+                      <span>TREASURE GOT! ({treasure_holder.name} HAS THE TREASURE)</span>
+                      <span class="text-3xl animate-bounce">💎</span>
+                    </div>
+                    <p class="text-xs text-blue-300/90 font-mono mt-1">
+                      The treasure has been claimed! Head to the Exit corridor to escape!
+                    </p>
+                  </div>
+                <% treasure_dropped_log?(@engine) -> %>
+                  <div class="w-full bg-gradient-to-r from-blue-950 via-indigo-900 to-blue-950 border-2 border-cyan-400 rounded-xl p-4 mb-4 text-center shadow-2xl animate-pulse">
+                    <div class="flex items-center justify-center gap-3 text-xl sm:text-2xl font-black text-cyan-200 tracking-wider">
+                      <span class="text-3xl animate-bounce">💧</span>
+                      <span>TREASURE LOST! (THE TREASURE WAS DROPPED IN THE LABYRINTH)</span>
+                      <span class="text-3xl animate-bounce">💧</span>
+                    </div>
+                    <p class="text-xs text-cyan-300/90 font-mono mt-1">
+                      The treasure is lying on the ground waiting to be reclaimed!
+                    </p>
+                  </div>
+                <% true -> %>
+              <% end %>
+
               <% me = current_player(@engine, @player_id) %>
               <% minotaur_pos = @engine.minotaur %>
               <% stink_detected? =
@@ -1002,13 +1029,18 @@ defmodule LabyrinthWeb.GameLive do
                         ),
                         cond do
                           is_in_sight or reveal_full_map? ->
-                            "bg-amber-950/40 border-amber-600/40 text-amber-100 font-bold shadow-inner"
+                            if(is_visited,
+                              do:
+                                "bg-amber-900/50 border-amber-500/60 text-amber-100 font-bold shadow-inner ring-1 ring-amber-500/30",
+                              else:
+                                "bg-amber-950/40 border-amber-600/40 text-amber-100 font-bold shadow-inner"
+                            )
 
                           is_memory_fog ->
-                            "bg-zinc-900/90 border-zinc-700/60 opacity-60 text-zinc-400 font-normal"
+                            "bg-slate-800/80 border-slate-600/60 opacity-80 text-slate-300 font-medium shadow-sm"
 
                           true ->
-                            "bg-slate-950/90 border-slate-900/60 opacity-30 text-slate-700"
+                            "bg-slate-950/90 border-slate-900/60 opacity-25 text-slate-700"
                         end,
                         if(is_me_here and me.status in [:active, :wounded, :stunned],
                           do: "bg-amber-500/10"
@@ -1569,4 +1601,22 @@ defmodule LabyrinthWeb.GameLive do
   defp format_pos({x, y}), do: "#{x}, #{y}"
   defp format_pos(%{"x" => x, "y" => y}), do: "#{x}, #{y}"
   defp format_pos(_), do: "?, ?"
+
+  defp treasure_dropped_log?(engine) do
+    logs = Map.get(engine, :log_entries, [])
+
+    last_treasure_log =
+      Enum.find(logs, fn msg ->
+        String.contains?(msg, "TREASURE") or String.contains?(msg, "treasure")
+      end)
+
+    if last_treasure_log do
+      String.contains?(last_treasure_log, "DROPPED") or
+        String.contains?(last_treasure_log, "dropped") or
+        String.contains?(last_treasure_log, "LOST") or
+        String.contains?(last_treasure_log, "lost")
+    else
+      false
+    end
+  end
 end

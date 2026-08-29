@@ -80,7 +80,7 @@ defmodule Labyrinth.GameTest do
       game_hard = Engine.new_game("Hard", difficulty: :hard)
       game_hard = Engine.add_player(game_hard, "p2", "Hard Player")
       p_hard = List.first(game_hard.players)
-      assert p_hard.health == 2
+      assert p_hard.health == 3
       assert p_hard.bullets == 2
     end
 
@@ -475,6 +475,7 @@ defmodule Labyrinth.GameTest do
       game = %{
         game
         | treasure: {1, 0},
+          exit: {5, 0},
           hospital: {5, 5},
           arsenal: {4, 5},
           pits: [],
@@ -591,6 +592,12 @@ defmodule Labyrinth.GameTest do
       state = Labyrinth.GameServer.get_state(game_id)
       assert state.id == game_id
       assert state.name == "Supervisor Test Game"
+
+      # Verify the game is persisted in DB and can start without foreign key constraint errors
+      assert {:ok, _game} = Labyrinth.GameServer.add_player(game_id, "p1", "Player 1")
+      assert {:ok, started_engine} = Labyrinth.GameServer.start_game(game_id)
+      assert started_engine.status in [:in_progress, :finished]
+      assert Games.get_db_game(game_id) != nil
     end
 
     test "game transitions to finished status when a player exits with the treasure" do

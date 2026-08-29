@@ -35,5 +35,6 @@ defmodule Labyrinth.Schema.PostIt do
       :is_stuck
     ])
     |> validate_required([:game_id, :player_id])
+    |> foreign_key_constraint(:game_id)
   end
 end

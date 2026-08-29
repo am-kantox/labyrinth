@@ -88,8 +88,8 @@ defmodule Labyrinth.GameServer do
               difficulty: difficulty
             )
 
-          # Save game record in DB asynchronously
-          async_create_game(%{
+          # Save game record in DB synchronously so parent record exists before turns/updates are recorded
+          Games.create_game(%{
             id: e.id,
             name: e.name,
             width: e.width,
@@ -297,12 +297,6 @@ defmodule Labyrinth.GameServer do
     else
       func.()
     end
-  end
-
-  defp async_create_game(attrs) do
-    start_async_db_task(fn ->
-      Games.create_game(attrs)
-    end)
   end
 
   defp async_record_turn(game_id, turn_number, player_id, summary) do

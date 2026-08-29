@@ -173,13 +173,14 @@ defmodule Labyrinth.Game.Engine.Landing do
 
     {updated_player, msg} =
       if base_player.bullets < 3 or Map.get(base_player, :grenades, 3) < 3 or not has_rope? do
-        p_reloaded = %{
+        p_reloaded =
           base_player
-          | bullets: 3,
+          |> Map.put(:items, new_items)
+          |> Map.merge(%{
+            bullets: 3,
             grenades: 3,
-            items: new_items,
             discovered_rel_features: rel_feats
-        }
+          })
 
         rope_msg = if not has_rope?, do: " and picked up a Rope 🪢!", else: "!"
 

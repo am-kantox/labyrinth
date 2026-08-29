@@ -114,12 +114,21 @@ defmodule Labyrinth.Game.Engine do
     else
       diff = Map.get(game.settings || %{}, "difficulty", :normal)
 
-      {start_hp, bullets, grenades, start_items} =
+      diff_atom =
         case diff do
-          :easy -> {3, 4, 4, MapSet.new([:rope])}
-          :hard -> {2, 2, 2, MapSet.new()}
-          _ -> {3, 3, 3, MapSet.new()}
+          d when is_atom(d) -> d
+          d when is_binary(d) -> String.to_atom(d)
+          _ -> :normal
         end
+
+      {bullets, grenades, start_items} =
+        case diff_atom do
+          :easy -> {4, 4, MapSet.new([:rope])}
+          :hard -> {2, 2, MapSet.new()}
+          _ -> {3, 3, MapSet.new()}
+        end
+
+      start_hp = 3
 
       player = %{
         id: player_id,

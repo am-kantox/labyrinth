@@ -40,5 +40,6 @@ defmodule Labyrinth.Schema.Turn do
       :action_type,
       :result
     ])
+    |> foreign_key_constraint(:game_id)
   end
 end
