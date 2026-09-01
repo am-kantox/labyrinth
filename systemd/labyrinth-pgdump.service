@@ -1,0 +1,56 @@
+# labyrinth-pgdump.service
+#
+# One-shot pg_dump of the labyrinth Postgres database, run on a schedule by
+# the companion labyrinth-pgdump.timer. This is the only backup story for
+# labyrinth: it is the only stateful component of the whole yokerhood.com
+# property (the main site's content is compiled into the BEAM at build
+# time and has no database).
+#
+# Install (as root, on the EC2 host):
+#
+#   install -o labyrinth -g labyrinth -m 0750 -d /var/backups/labyrinth
+#   cp systemd/labyrinth-pgdump.service systemd/labyrinth-pgdump.timer \
+#     /etc/systemd/system/
+#   cp systemd/labyrinth-pgdump.env.example /etc/labyrinth/pgdump.env
+#   # then edit /etc/labyrinth/pgdump.env with the real DATABASE_URL
+#   chmod 0600 /etc/labyrinth/pgdump.env
+#   systemctl daemon-reload
+#   systemctl enable --now labyrinth-pgdump.timer
+#
+# Restore a dump with:
+#
+#   pg_restore --clean --if-exists -d "$DATABASE_URL" /var/backups/labyrinth/<file>.dump
+#
+# Retention (pruning dumps older than 14 days) is handled by the
+# ExecStartPost ` find` invocation below rather than a separate unit, to
+# keep the backup story to a single file pair.
+
+[Unit]
+Description=labyrinth PostgreSQL backup (pg_dump)
+Wants=network-online.target
+After=network-online.target postgresql.service
+
+[Service]
+Type=oneshot
+User=labyrinth
+Group=labyrinth
+EnvironmentFile=/etc/labyrinth/pgdump.env
+WorkingDirectory=/var/backups/labyrinth
+
+# Custom format (-Fc) so pg_restore can do selective/parallel restores.
+# The filename embeds an ISO-8601 timestamp so runs never collide or
+# overwrite each other.
+ExecStart=/bin/sh -c '\
+  umask 077 && \
+  pg_dump -Fc --no-owner --no-privileges "$DATABASE_URL" \
+    -f "/var/backups/labyrinth/labyrinth-$(date -u +%%Y%%m%%dT%%H%%M%%SZ).dump" \
+'
+ExecStartPost=/usr/bin/find /var/backups/labyrinth -name '*.dump' -mtime +14 -delete
+
+# Hardening: this unit only needs network egress to Postgres and write
+# access to its own backup directory.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/var/backups/labyrinth
+ProtectHome=true

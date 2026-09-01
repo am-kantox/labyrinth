@@ -1,0 +1,15 @@
+# labyrinth-pgdump.timer
+#
+# Runs labyrinth-pgdump.service once a day. See that unit for install
+# instructions and restore steps.
+
+[Unit]
+Description=Daily labyrinth PostgreSQL backup
+
+[Timer]
+OnCalendar=*-*-* 03:15:00
+RandomizedDelaySec=600
+Persistent=true
+
+[Install]
+WantedBy=timers.target

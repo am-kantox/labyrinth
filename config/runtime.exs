@@ -70,18 +70,20 @@ if config_env() == :prod do
       You can generate one by calling: mix phx.gen.secret
       """
 
-  host = System.get_env("PHX_HOST") || "example.com"
+  host = System.get_env("PHX_HOST") || "maze.yokerhood.com"
 
   config :labyrinth, :dns_cluster_query, System.get_env("DNS_CLUSTER_QUERY")
 
   config :labyrinth, LabyrinthWeb.Endpoint,
     url: [host: host, port: 443, scheme: "https"],
     http: [
-      # Enable IPv6 and bind on all interfaces.
-      # Set it to  {0, 0, 0, 0, 0, 0, 0, 1} for local network only access.
-      # See the documentation on https://bandit.hexdocs.pm/Bandit.html#t:options/0
-      # for details about using IPv6 vs IPv4 and loopback vs public addresses.
-      ip: {0, 0, 0, 0, 0, 0, 0, 0}
+      # labyrinth sits behind Caddy on the same EC2 host (see
+      # yokerhood.com's ops/Caddyfile, which reverse-proxies `maze.` to
+      # 127.0.0.1:4001), so the endpoint only ever needs to accept
+      # connections from localhost, never directly from the internet.
+      # Overrides the all-envs default above; dev/test are unaffected.
+      port: String.to_integer(System.get_env("PORT", "4001")),
+      ip: {127, 0, 0, 1}
     ],
     secret_key_base: secret_key_base
 
