@@ -11,6 +11,7 @@ defmodule Labyrinth.GameServer do
 
   @pubsub Labyrinth.PubSub
   @max_players 4
+  @mix_env Mix.env()
 
   defmodule State do
     @moduledoc false
@@ -292,7 +293,7 @@ defmodule Labyrinth.GameServer do
   end
 
   defp start_async_db_task(func) do
-    if Application.get_env(:labyrinth, :async_db, true) and Mix.env() != :test do
+    if Application.get_env(:labyrinth, :async_db, true) and @mix_env != :test do
       Task.Supervisor.start_child(Labyrinth.TaskSupervisor, func)
     else
       func.()
