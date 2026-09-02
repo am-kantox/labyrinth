@@ -213,3 +213,30 @@ Run the test suite and project verification using the mix aliases:
   ```bash
   mix test
   ```
+
+---
+
+## Deployment
+
+labyrinth runs as a systemd-supervised Mix release on the same shared AWS
+EC2 instance as `yokerhood.com` (the `maze.yokerhood.com` subdomain),
+bound to loopback only (`127.0.0.1:3060`). `.github/workflows/deploy.yml`
+builds and ships a new release on every push to `main`, using the
+app-agnostic `ops/scripts/deploy-release.sh` (atomic symlink switch,
+restart, health-check-with-rollback) shared with that repository. Ecto
+migrations run automatically on every restart via `ExecStartPre` in
+`systemd/labyrinth.service` (see `lib/labyrinth/release.ex`) -- no
+separate migration step in the workflow.
+
+The reverse proxy (NGINX, TLS via certbot) and DNS both live in the
+`yokerhood.com` repository (`ops/nginx/yokerhood.conf`), since they're
+shared infrastructure for the whole `yokerhood.com` property, not
+labyrinth-specific. `systemd/labyrinth.service` and
+`systemd/labyrinth.env.example` here document the actual unit and its
+required environment variables (`SECRET_KEY_BASE`, `PHX_HOST`, `PORT`,
+`DATABASE_URL`); `systemd/labyrinth-pgdump.*` documents the nightly
+`pg_dump` backup timer for its Postgres database, the only stateful
+component of the whole property.
+
+Requires these GitHub Actions repository secrets: `DEPLOY_SSH_HOST`,
+`DEPLOY_SSH_USER`, `DEPLOY_SSH_PRIVATE_KEY`, `DEPLOY_SSH_KNOWN_HOSTS`.

@@ -15,6 +15,13 @@ defmodule LabyrinthWeb.Router do
     plug :accepts, ["json"]
   end
 
+  # No pipe_through: deploy scripts curl this directly against
+  # 127.0.0.1:3060, so it must never depend on session/auth plugs (or the
+  # Host header they might otherwise care about).
+  scope "/", LabyrinthWeb do
+    get "/healthz", HealthController, :show
+  end
+
   scope "/auth", LabyrinthWeb do
     pipe_through :browser
 

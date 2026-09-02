@@ -77,12 +77,13 @@ if config_env() == :prod do
   config :labyrinth, LabyrinthWeb.Endpoint,
     url: [host: host, port: 443, scheme: "https"],
     http: [
-      # labyrinth sits behind Caddy on the same EC2 host (see
-      # yokerhood.com's ops/Caddyfile, which reverse-proxies `maze.` to
-      # 127.0.0.1:4001), so the endpoint only ever needs to accept
-      # connections from localhost, never directly from the internet.
-      # Overrides the all-envs default above; dev/test are unaffected.
-      port: String.to_integer(System.get_env("PORT", "4001")),
+      # labyrinth sits behind NGINX on the same EC2 host (see
+      # yokerhood.com's ops/nginx/yokerhood.conf, which reverse-proxies
+      # `maze.` to 127.0.0.1:3060), so the endpoint only ever needs to
+      # accept connections from localhost, never directly from the
+      # internet. Overrides the all-envs default above; dev/test are
+      # unaffected.
+      port: String.to_integer(System.get_env("PORT", "3060")),
       ip: {127, 0, 0, 1}
     ],
     secret_key_base: secret_key_base

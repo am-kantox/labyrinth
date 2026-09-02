@@ -1,0 +1,84 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  # Lets you re-run a deploy from the Actions tab without an empty commit.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  build-and-deploy:
+    # Pinned to a specific Ubuntu LTS, not `ubuntu-latest`, so the release
+    # is always built on the same userspace (glibc, OpenSSL, ...) as the
+    # EC2 AMI it runs on -- the same shared host yokerhood.com deploys to.
+    # Keep the EC2 instance on the matching Ubuntu LTS release.
+    runs-on: ubuntu-22.04
+
+    env:
+      MIX_ENV: prod
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Elixir
+        uses: erlef/setup-beam@v1
+        with:
+          otp-version: "29.0"
+          elixir-version: "1.20.3"
+
+      - name: Restore dependency cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            deps
+            _build
+          key: mix-prod-${{ runner.os }}-${{ hashFiles('**/mix.lock') }}
+          restore-keys: mix-prod-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: mix deps.get --only prod
+
+      - name: Compile
+        run: mix compile --warnings-as-errors
+
+      - name: Install asset build tools
+        run: mix assets.setup
+
+      - name: Build and digest assets
+        run: mix assets.deploy
+
+      - name: Assemble release
+        run: mix release --overwrite
+
+      - name: Package release tarball
+        run: tar -czf /tmp/labyrinth-release.tar.gz -C _build/prod/rel/labyrinth .
+
+      - name: Configure deploy SSH key
+        run: |
+          umask 077
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
+          printf '%s\n' "${{ secrets.DEPLOY_SSH_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+
+      - name: Upload release and deploy script
+        run: |
+          scp -i ~/.ssh/id_ed25519 \
+            /tmp/labyrinth-release.tar.gz \
+            ops/scripts/deploy-release.sh \
+            "${{ secrets.DEPLOY_SSH_USER }}@${{ secrets.DEPLOY_SSH_HOST }}:/tmp/"
+
+      - name: Install release and switch over
+        run: |
+          ssh -i ~/.ssh/id_ed25519 \
+            "${{ secrets.DEPLOY_SSH_USER }}@${{ secrets.DEPLOY_SSH_HOST }}" \
+            "chmod +x /tmp/deploy-release.sh && /tmp/deploy-release.sh \
+              labyrinth labyrinth /opt/labyrinth \
+              ${{ github.sha }} /tmp/labyrinth-release.tar.gz \
+              http://127.0.0.1:3060/healthz && rm -f /tmp/deploy-release.sh"

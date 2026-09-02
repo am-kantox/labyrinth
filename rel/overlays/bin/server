@@ -1,0 +1,7 @@
+#!/bin/sh
+# Copied into every release under bin/server by `mix release` (Mix
+# automatically merges the rel/overlays tree into the release, no extra
+# config is required). systemd's labyrinth.service execs this directly, so
+# operators never need to remember to set PHX_SERVER by hand.
+cd -P -- "$(dirname -- "$0")"/..
+PHX_SERVER=true exec bin/labyrinth start

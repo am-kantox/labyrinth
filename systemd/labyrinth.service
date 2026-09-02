@@ -1,0 +1,55 @@
+# labyrinth.service
+#
+# Runs the labyrinth Mix release, reached through yokerhood.com's NGINX
+# `maze.` vhost -- see that repository's ops/nginx/yokerhood.conf, which
+# reverse-proxies `maze.yokerhood.com` to 127.0.0.1:3060.
+# Install on the EC2 host:
+#
+#   useradd --system --home-dir /opt/labyrinth --shell /usr/sbin/nologin labyrinth
+#   install -o labyrinth -g labyrinth -m 0755 -d /opt/labyrinth/releases
+#   install -o root -g root -m 0755 -d /etc/labyrinth
+#   cp systemd/labyrinth.env.example /etc/labyrinth/env
+#   # then edit /etc/labyrinth/env with real secrets and chmod 0600 it
+#   cp systemd/labyrinth.service /etc/systemd/system/
+#   systemctl daemon-reload
+#   systemctl enable --now labyrinth
+#
+# labyrinth is the only stateful component of the yokerhood.com property
+# (PostgreSQL); see systemd/labyrinth-pgdump.{service,timer,env.example}
+# in this repository for its backup story.
+
+[Unit]
+Description=labyrinth (maze.yokerhood.com) Phoenix release
+Wants=network-online.target postgresql.service
+After=network-online.target postgresql.service
+
+[Service]
+Type=exec
+User=labyrinth
+Group=labyrinth
+WorkingDirectory=/opt/labyrinth/current
+EnvironmentFile=/etc/labyrinth/env
+
+# Runs ecto migrations against the release that's about to start, using
+# the same user/environment as the app itself -- see lib/labyrinth/release.ex.
+# `ops/scripts/deploy-release.sh` tolerates a failed restart (falls
+# through into its health-check retry loop instead of hard-exiting), so a
+# migration failure here rolls back to the previous release exactly like
+# any other unhealthy restart would.
+ExecStartPre=/opt/labyrinth/current/bin/labyrinth eval "Labyrinth.Release.migrate()"
+ExecStart=/opt/labyrinth/current/bin/server
+ExecReload=/bin/kill -HUP $MAINPID
+
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=30
+
+# labyrinth's own state lives in Postgres, not on the local filesystem, so
+# this release needs no extra ReadWritePaths beyond its own tree.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target
